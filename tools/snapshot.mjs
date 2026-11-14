@@ -58,7 +58,22 @@ const snapshot = {
     lorebooks: library.lorebooks.length,
     errors: library.errors.length,
   },
-  cards: library.cards.map((c) => ({ id: c.id, file: path.basename(c.file), ...c.summary })),
+  cards: library.cards.map((c) => ({
+    id: c.id,
+    file: path.basename(c.file),
+    ...c.summary,
+    // 面板需要的少量原始字段（不含几 MB 的脚本正文）
+    rawLite: {
+      name: c.card.name,
+      description: c.card.description,
+      firstMes: c.card.firstMes,
+      systemPrompt: c.card.systemPrompt,
+      postHistoryInstructions: c.card.postHistoryInstructions,
+      alternateGreetings: c.card.alternateGreetings.slice(0, 3),
+      depthPrompt: c.card.depthPrompt,
+      extensions: { regex_scripts: c.card.regexScripts },
+    },
+  })),
   presets: library.presets.map((p) => ({ id: p.id, file: path.basename(p.file), name: p.name, ...p.summary })),
   lorebooks: library.lorebooks.map((l) => ({ id: l.id, file: path.basename(l.file), name: l.name, ...l.summary })),
   errors: library.errors,

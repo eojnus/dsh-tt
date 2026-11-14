@@ -1,12 +1,14 @@
-﻿// 角色扮演工作台（Client）。构建时由 tools/build-client.mjs 把 SNAPSHOT 注入。
+// 角色扮演（Client）—— v2 面板：局列表 / 窄顶栏 / 聊天区 / composer / 资产管理
+// 构建时由 tools/build-client.mjs 注入资产快照。
 window.__ModuleLoader__.load({
   id: '@dsh-tt/roleplay',
   factory(require) {
     const React = require('react');
     const h = React.createElement;
-    const { useState, useMemo, useCallback } = React;
+    const { useState, useEffect, useMemo, useRef, useCallback } = React;
+
     const SNAPSHOT = {
-  "generatedAt": "2026-11-14T12:28:05.201Z",
+  "generatedAt": "2026-11-14T13:59:12.576Z",
   "roots": [
     "X:\\dsh-tt\\参考",
     "X:\\dsh-tt\\assets"
@@ -43,6 +45,253 @@ window.__ModuleLoader__.load({
         "prompt": "",
         "depth": 4,
         "role": "system"
+      },
+      "rawLite": {
+        "name": "春日狂想曲·统一版（玩家通道）",
+        "description": "内容纯属虚构，{{user}}为穿越者。",
+        "firstMes": "<content>\n【开局 · 春日狂想曲】\n</content>",
+        "systemPrompt": "",
+        "postHistoryInstructions": "",
+        "alternateGreetings": [
+          "<content>\n那些关于夏天的旧事，在你的脑海里总是泛着一层被烈日烤得发干的白光。\n\n你已经好些年没有踩上夏越村这片土地了。在你的记忆深处，这地方仿佛永远停留在那个没有尽头的悠长暑假。只要闭上眼睛，耳朵里立刻就会塞满震耳欲聋的蝉鸣，鼻尖也能闻到混合着泥土腥味和杂草被晒蔫之后的焦涩香气。\n\n曾经的你，在这座深山褶皱里的村落里留下过不少脚印。\n\n那会儿你最喜欢赖在吉川美穗身边。那个有着棕红色长发、说话温温柔柔的女人，身上总带着一股甜甜的奶香。她家太郎还小的时候，你还抢过太郎的奶碗，把美穗闹得满脸通红。她那时候总是无可奈何地笑着，一边护着胸口，一边叹气说你力气真大。\n\n还有西村百花。即便在热得让人喘不过气的盛夏，百花也总是规规矩矩地穿着淡紫色的和服，冷着一张绝美清秀的脸孔。你调皮捣蛋把泥巴蹭到她衣角时，她总会蹙起眉头，用那副居高临下的语气毫不留情地数落你，可数落完了，又会端出一碗冰镇过的麦茶塞进你手里。\n\n至于山上椿芽，记忆里的她总是将那条温婉的辫子垂在胸前，系着半身围裙站在院子前。无论你和左寻打闹得多不像样，椿芽都会露出极具包容力的亲切微笑，轻声细语地替你擦干净脸上的汗水，柔声嘱咐着慢点跑、别摔着。\n\n这些零碎的记忆，就像藏在柜子底下的旧弹珠，随着绿皮电车摇摇晃晃的节奏，一颗接着一颗在你的胸膛里轻轻撞击。那种混杂着往昔岁月的无拘无束与漫长分别带来的陌生感，让你在推开老宅木门的那一瞬间，脚步都变得有些迟疑。\n\n当然，你知道你不该这么想。你深陷回忆的间隙，随着风铃发出清脆的撞击声，现实的气息扑面而来。\n\n七月末清晨的燥热已经开始在走廊里蔓延。头顶的旧电风扇吱呀吱呀地转动着，吃力地搅动着屋里黏稠沉闷的空气。你正坐在春日家宽敞却显得昏暗的木质客厅里，脚底下是有些磨损的榻榻米。\n\n「哎呀，真是长大了呢……」\n\n坐在你对面的春日久美子表姨微微低着头，双手交叠放在围裙前。她那头乌黑柔顺的低马尾一直垂在身侧，眉眼间带着局促的温和笑意。她悄悄抬眼看了你一眼，似乎还有些不太习惯和你这样面对面坐着，耳根在闷热的空气里泛着浅浅的红。\n\n*变得这么沉稳挺拔了，都不好意思像以前那样摸头了呢。*\n\n「喂，你这家伙，发什么呆呢！」\n\n肩膀忽然挨了重重的一记拍打。穿着浅绿色背心和牛仔短裤的春日葵赤着脚踩在地板上，大大咧咧地凑到了你的跟前。她那头被阳光晒成浅金色的短发显得乱蓬蓬的，小麦色的手臂和修长结实的大腿毫无防备地展露着，额角还挂着早晨晨跑后留下的晶莹汗珠。\n\n葵双手叉着腰，凑得很近地盯着你的脸看，随即噗嗤一声笑了出来。\n\n「变帅了一点嘛，不过眼神还是呆呆的，跟以前被我拽着到处跑的时候一模一样。」\n\n「弟弟酱好像长高了一点。」\n\n坐在稍远一些矮桌旁的春日静奈温和道，她穿着白色背心与居家长裙，深蓝色的长发随意地搭在白皙的肩头。她将盛满麦茶的玻璃杯轻轻搁在你面前的桌面上，杯壁上凝结的水珠顺着滑落下来，滴在木桌上留下一小滩深色的印记。\n\n静奈那双温柔端庄的眼眸落在你的身上。\n\n「坐了那么久的车，很累了吧？先喝点水润润嗓子。」\n\n一直沉默地蹲坐在门槛边卷裤腿的春日大平这时候才回过头来，那张被常年跑车晒得黝黑木讷的脸上挤出一个局促的笑容，他习惯性地在粗糙的工作裤上蹭了蹭手掌。\n\n「呃……那个，早饭马上就好了，我去厨房看看火。」\n\n总之，你的乡下假期生活，就这样开始了。\n</content>\n\n\n<重要记忆>无</重要记忆>\n\n<后台推演>\n［本回合移动检定］西村百花:未定｜西村太郎:未定｜西村诚:未定｜山上椿芽:未定｜山上左寻:未定｜山上和也:未定｜吉川美穗:未定｜吉川大田:未定｜吉川宏:未定｜香本千玲:未定｜香本悠:未定\n1.西村百花:\n地点:西村太郎家·厨房\n正在做:下厨\n具体正在做:站在灶台前撇味增汤的浮沫，锅边摆着三只碗\n心里话:太郎该起来了，再不起早饭就要凉透。\n2.西村太郎:\n地点:西村太郎家·次卧1\n正在做:睡觉\n具体正在做:四仰八叉摊在凉席上，被子早踢到了脚边\n心里话:再睡五分钟……今天约好了去找左寻玩的。\n3.西村诚:\n地点:村口大门\n正在做:出村办事\n具体正在做:蹲在巴士站牌下抽烟，等七点二十那班车去镇上拉货\n心里话:这批木料今天得送到，晚了又要被农协的人念。\n4.山上椿芽:\n地点:山上左寻家·厨房\n正在做:做家务\n具体正在做:在灶间淘米，顺手把昨夜的碗筷泡进木盆里\n心里话:等会儿把晾衣杆上的被单收进来，日头一晒就干了。\n5.山上左寻:\n地点:山上左寻家·次卧1\n正在做:睡觉\n具体正在做:抱着枕头趴着睡，一只脚丫伸在被子外面\n心里话:呼……呼……\n6.山上和也:\n地点:伐木场\n正在做:上工\n具体正在做:靠在原木堆上歇第二壶茶，锯子泡在溪水里\n心里话:今天日头毒，中午得找个树荫躺一会儿。\n7.吉川美穗:\n地点:吉川大田家·厨房\n正在做:下厨\n具体正在做:把腌好的鱼码进竹屉，蹲下身拨了拨灶膛里的柴\n心里话:那孩子也不知道长成什么样子了，晚些去春日家看一眼。\n8.吉川大田:\n地点:吉川大田家·次卧1\n正在做:睡觉\n具体正在做:睡相极差地横在榻榻米上，一只手还抓着游戏机\n心里话:好困啊……今天得找个借口溜出去玩。\n9.吉川宏:\n地点:伐木场\n正在做:上工\n具体正在做:光着膀子抡斧头劈柴，柴火已经堆了半人高\n心里话:这天气干活跟上刑一样。\n10.香本千玲:\n地点:小卖铺里\n正在做:娱乐\n具体正在做:站在柜台后面点昨天的零钱，电扇对着后颈吹\n心里话:今天要是能多卖出去几瓶汽水就好了。\n11.香本悠:\n地点:小卖铺里\n正在做:娱乐\n具体正在做:趴在柜台角落写暑假作业，铅笔头咬得全是牙印\n心里话:姐姐说写完这一页就给我拿一根冰棍。\n</后台推演>\n<UpdateVariable>\n<Analysis>\n- Time passed: 开局，时间落在早上七点四十。\n- Dramatic update: No.\n- Variable analysis:\n  - 开局建档：主要角色列表 7 人（西村百花、山上椿芽、春日久美子、春日葵、春日静奈、吉川美穗、香本千玲），苦主列表 8 人（西村太郎、西村诚、山上左寻、山上和也、吉川大田、吉川宏、春日大平、香本悠）。\n  - 地点一律写「宅邸名·房间名」或者整块户外地名，不写大位置/小位置。\n  - 久美子、葵、静奈、大平此刻都在春日大平家客厅，在场状态 true；其余全部 false。\n</Analysis>\n<JSONPatch>\n[\n  {\n    \"op\": \"replace\",\n    \"path\": \"/时间/年份\",\n    \"value\": 2018\n  },\n  {\n    \"op\": \"replace\",\n    \"path\": \"/时间/月份\",\n    \"value\": 7\n  },\n  {\n    \"op\": \"replace\",\n    \"path\": \"/时间/日期\",\n    \"value\": 26\n  },\n  {\"op\":\"replace\",\"path\":\"/时间/精确时间\",\"value\":\"07:40\"},\n  {\n    \"op\": \"insert\",\n    \"path\": \"/主要角色列表/西村百花\",\n    \"value\": {\n      \"姓名\": \"西村百花\",\n      \"心里话\": \"太郎是不是又赖床了，味增汤都要凉了。\",\n      \"好感度\": 20,\n      \"小穴\": \"肥大红润的阴唇被紧致包裹着，花瓣娇嫩，散发着成熟女性的独特气息。\",\n      \"奶子\": \"e罩杯的大奶子沉甸甸的，乳晕是浅粉色，乳头坚挺，充满弹性。\",\n      \"足部\": \"白皙优美的脚，足弓优美，脚趾修长精致，像精雕细琢的艺术品。\",\n      \"大腿\": \"白皙嫩滑的大腿丰腴有致，肌肤紧实而富有弹性，线条流畅诱人。\",\n      \"警惕值\": 0,\n      \"恶堕值\": 0,\n      \"被偷拍照片\": 0,\n      \"地点\": \"西村太郎家·厨房\",\n      \"在场状态\": false,\n      \"正在做\": \"下厨\",\n      \"具体正在做\": \"站在灶台前撇味增汤的浮沫，锅边摆着三只碗\",\n      \"穿着\": \"淡紫色和服\"\n    }\n  },\n  {\n    \"op\": \"insert\",\n    \"path\": \"/主要角色列表/山上椿芽\",\n    \"value\": {\n      \"姓名\": \"山上椿芽\",\n      \"心里话\": \"被单再不收回来，就要被露水打湿了。\",\n      \"好感度\": 20,\n      \"小穴\": \"肥大红润的阴唇被紧致包裹着，花瓣娇嫩，散发着成熟女性的独特气息。\",\n      \"奶子\": \"e罩杯的大奶子沉甸甸的，乳晕是浅粉色，乳头坚挺，充满弹性。\",\n      \"足部\": \"白皙优美的脚，足弓优美，脚趾修长精致，像精雕细琢的艺术品。\",\n      \"大腿\": \"白皙嫩滑的大腿丰腴有致，肌肤紧实而富有弹性，线条流畅诱人。\",\n      \"警惕值\": 0,\n      \"恶堕值\": 0,\n      \"被偷拍照片\": 0,\n      \"地点\": \"山上左寻家·厨房\",\n      \"在场状态\": false,\n      \"正在做\": \"做家务\",\n      \"具体正在做\": \"在灶间淘米，顺手把昨夜的碗筷泡进木盆里\",\n      \"穿着\": \"淡色系棉麻长裙，外面系一条半身围裙\"\n    }\n  },\n  {\n    \"op\": \"insert\",\n    \"path\": \"/主要角色列表/春日久美子\",\n    \"value\": {\n      \"姓名\": \"春日久美子\",\n      \"心里话\": \"真可爱呢，这么久不见，今晚必须得做点好吃的。\",\n      \"好感度\": 20,\n      \"小穴\": \"肥大红润的阴唇被紧致包裹着，花瓣娇嫩，散发着成熟女性的独特气息。\",\n      \"奶子\": \"e罩杯的大奶子沉甸甸的，乳晕是浅粉色，乳头坚挺，充满弹性。\",\n      \"足部\": \"白皙优美的脚，足弓优美，脚趾修长精致，像精雕细琢的艺术品。\",\n      \"大腿\": \"白皙嫩滑的大腿丰腴有致，肌肤紧实而富有弹性，线条流畅诱人。\",\n      \"警惕值\": 0,\n      \"恶堕值\": 0,\n      \"被偷拍照片\": 0,\n      \"地点\": \"春日大平家·客厅\",\n      \"在场状态\": true,\n      \"正在做\": \"娱乐\",\n      \"具体正在做\": \"坐在{{user}}对面，双手交叠放在围裙前，耳根泛红\",\n      \"穿着\": \"米白色轻薄长袖外套，内搭黑白条纹花边衣，下身棕色居家长裙\"\n    }\n  },\n  {\n    \"op\": \"insert\",\n    \"path\": \"/主要角色列表/春日葵\",\n    \"value\": {\n      \"姓名\": \"春日葵\",\n      \"心里话\": \"表弟这家伙好像又壮了一点啊，似乎还帅了一点？\",\n      \"好感度\": 20,\n      \"小穴\": \"肥大红润的阴唇被紧致包裹着，花瓣娇嫩，散发着成熟女性的独特气息。\",\n      \"奶子\": \"e罩杯的大奶子沉甸甸的，乳晕是浅粉色，乳头坚挺，充满弹性。\",\n      \"足部\": \"白皙优美的脚，足弓优美，脚趾修长精致，像精雕细琢的艺术品。\",\n      \"大腿\": \"白皙嫩滑的大腿丰腴有致，肌肤紧实而富有弹性，线条流畅诱人。\",\n      \"警惕值\": 0,\n      \"恶堕值\": 0,\n      \"被偷拍照片\": 0,\n      \"地点\": \"春日大平家·客厅\",\n      \"在场状态\": true,\n      \"正在做\": \"娱乐\",\n      \"具体正在做\": \"赤脚站在榻榻米上，双手叉腰凑近了打量{{user}}的脸\",\n      \"穿着\": \"浅绿色背心配牛仔短裤，赤脚\"\n    }\n  },\n  {\n    \"op\": \"insert\",\n    \"path\": \"/主要角色列表/春日静奈\",\n    \"value\": {\n      \"姓名\": \"春日静奈\",\n      \"心里话\": \"表弟还是这么可爱呢，改天带他去河边走走吧。\",\n      \"好感度\": 20,\n      \"小穴\": \"肥大红润的阴唇被紧致包裹着，花瓣娇嫩，散发着成熟女性的独特气息。\",\n      \"奶子\": \"e罩杯的大奶子沉甸甸的，乳晕是浅粉色，乳头坚挺，充满弹性。\",\n      \"足部\": \"白皙优美的脚，足弓优美，脚趾修长精致，像精雕细琢的艺术品。\",\n      \"大腿\": \"白皙嫩滑的大腿丰腴有致，肌肤紧实而富有弹性，线条流畅诱人。\",\n      \"警惕值\": 0,\n      \"恶堕值\": 0,\n      \"被偷拍照片\": 0,\n      \"地点\": \"春日大平家·客厅\",\n      \"在场状态\": true,\n      \"正在做\": \"娱乐\",\n      \"具体正在做\": \"把盛满麦茶的玻璃杯轻轻搁在{{user}}面前\",\n      \"穿着\": \"白色背心配棕色居家长裙\"\n    }\n  },\n  {\n    \"op\": \"insert\",\n    \"path\": \"/主要角色列表/吉川美穗\",\n    \"value\": {\n      \"姓名\": \"吉川美穗\",\n      \"心里话\": \"那孩子现在长成什么样子了呢，真好奇。\",\n      \"好感度\": 20,\n      \"小穴\": \"肥大红润的阴唇被紧致包裹着，花瓣娇嫩，散发着成熟女性的独特气息。\",\n      \"奶子\": \"e罩杯的大奶子沉甸甸的，乳晕是浅粉色，乳头坚挺，充满弹性。\",\n      \"足部\": \"白皙优美的脚，足弓优美，脚趾修长精致，像精雕细琢的艺术品。\",\n      \"大腿\": \"白皙嫩滑的大腿丰腴有致，肌肤紧实而富有弹性，线条流畅诱人。\",\n      \"警惕值\": 0,\n      \"恶堕值\": 0,\n      \"被偷拍照片\": 0,\n      \"地点\": \"吉川大田家·厨房\",\n      \"在场状态\": false,\n      \"正在做\": \"下厨\",\n      \"具体正在做\": \"把腌好的鱼码进竹屉，蹲下身拨了拨灶膛里的柴\",\n      \"穿着\": \"白色体恤配米白色围裙，下身居家长裙\"\n    }\n  },\n  {\n    \"op\": \"insert\",\n    \"path\": \"/主要角色列表/香本千玲\",\n    \"value\": {\n      \"姓名\": \"香本千玲\",\n      \"心里话\": \"今天要是能多卖出去几瓶汽水就好了。\",\n      \"好感度\": 20,\n      \"小穴\": \"肥大红润的阴唇被紧致包裹着，花瓣娇嫩，散发着成熟女性的独特气息。\",\n      \"奶子\": \"e罩杯的大奶子沉甸甸的，乳晕是浅粉色，乳头坚挺，充满弹性。\",\n      \"足部\": \"白皙优美的脚，足弓优美，脚趾修长精致，像精雕细琢的艺术品。\",\n      \"大腿\": \"白皙嫩滑的大腿丰腴有致，肌肤紧实而富有弹性，线条流畅诱人。\",\n      \"警惕值\": 0,\n      \"恶堕值\": 0,\n      \"被偷拍照片\": 0,\n      \"地点\": \"小卖铺里\",\n      \"在场状态\": false,\n      \"正在做\": \"娱乐\",\n      \"具体正在做\": \"站在柜台后面点昨天的零钱，电扇对着后颈吹\",\n      \"穿着\": \"浅棕色针织毛衣，袖子挽到小臂，胸口别着三上商店的名牌\"\n    }\n  },\n  {\n    \"op\": \"insert\",\n    \"path\": \"/苦主列表/西村太郎\",\n    \"value\": {\n      \"姓名\": \"西村太郎\",\n      \"心里话\": \"再睡五分钟……今天约好了去找左寻玩的。\",\n      \"地点\": \"西村太郎家·次卧1\",\n      \"心理阶段\": \"阶段一-无敌意\",\n      \"在场状态\": false,\n      \"正在做\": \"睡觉\",\n      \"具体正在做\": \"四仰八叉摊在凉席上，被子早踢到了脚边\"\n    }\n  },\n  {\n    \"op\": \"insert\",\n    \"path\": \"/苦主列表/西村诚\",\n    \"value\": {\n      \"姓名\": \"西村诚\",\n      \"心里话\": \"这批木料今天得送到，晚了又要被农协的人念。\",\n      \"地点\": \"村口大门\",\n      \"心理阶段\": \"阶段一-无敌意\",\n      \"在场状态\": false,\n      \"正在做\": \"出村办事\",\n      \"具体正在做\": \"蹲在巴士站牌下抽烟，等七点二十那班车去镇上拉货\"\n    }\n  },\n  {\n    \"op\": \"insert\",\n    \"path\": \"/苦主列表/山上左寻\",\n    \"value\": {\n      \"姓名\": \"山上左寻\",\n      \"心里话\": \"等会儿我去找太郎玩吧，那家伙合我胃口。\",\n      \"地点\": \"山上左寻家·次卧1\",\n      \"心理阶段\": \"阶段一-无敌意\",\n      \"在场状态\": false,\n      \"正在做\": \"睡觉\",\n      \"具体正在做\": \"抱着枕头趴着睡，一只脚丫伸在被子外面\"\n    }\n  },\n  {\n    \"op\": \"insert\",\n    \"path\": \"/苦主列表/山上和也\",\n    \"value\": {\n      \"姓名\": \"山上和也\",\n      \"心里话\": \"今天日头毒，中午得找个树荫躺一会儿。\",\n      \"地点\": \"伐木场\",\n      \"心理阶段\": \"阶段一-无敌意\",\n      \"在场状态\": false,\n      \"正在做\": \"上工\",\n      \"具体正在做\": \"靠在原木堆上歇第二壶茶，锯子泡在溪水里\"\n    }\n  },\n  {\n    \"op\": \"insert\",\n    \"path\": \"/苦主列表/吉川大田\",\n    \"value\": {\n      \"姓名\": \"吉川大田\",\n      \"心里话\": \"好困啊……今天得找个借口溜出去玩。\",\n      \"地点\": \"吉川大田家·次卧1\",\n      \"心理阶段\": \"阶段一-无敌意\",\n      \"在场状态\": false,\n      \"正在做\": \"睡觉\",\n      \"具体正在做\": \"睡相极差地横在榻榻米上，一只手还抓着游戏机\"\n    }\n  },\n  {\n    \"op\": \"insert\",\n    \"path\": \"/苦主列表/吉川宏\",\n    \"value\": {\n      \"姓名\": \"吉川宏\",\n      \"心里话\": \"这天气干活跟上刑一样。\",\n      \"地点\": \"伐木场\",\n      \"心理阶段\": \"阶段一-无敌意\",\n      \"在场状态\": false,\n      \"正在做\": \"上工\",\n      \"具体正在做\": \"光着膀子抡斧头劈柴，柴火已经堆了半人高\"\n    }\n  },\n  {\n    \"op\": \"insert\",\n    \"path\": \"/苦主列表/春日大平\",\n    \"value\": {\n      \"姓名\": \"春日大平\",\n      \"心里话\": \"难得{{user}}来了，必须得准备准备。\",\n      \"地点\": \"春日大平家·客厅\",\n      \"心理阶段\": \"阶段一-无敌意\",\n      \"在场状态\": true,\n      \"正在做\": \"娱乐\",\n      \"具体正在做\": \"在门槛边卷着裤腿，说去厨房看看火\"\n    }\n  },\n  {\n    \"op\": \"insert\",\n    \"path\": \"/苦主列表/香本悠\",\n    \"value\": {\n      \"姓名\": \"香本悠\",\n      \"心里话\": \"姐姐说写完这一页就给我拿一根冰棍。\",\n      \"地点\": \"小卖铺里\",\n      \"心理阶段\": \"阶段一-无敌意\",\n      \"在场状态\": false,\n      \"正在做\": \"娱乐\",\n      \"具体正在做\": \"趴在柜台角落写暑假作业，铅笔头咬得全是牙印\"\n    }\n  },\n  {\n    \"op\": \"insert\",\n    \"path\": \"/主角信息/地点\",\n    \"value\": \"开场白\"\n  },\n  {\n    \"op\": \"insert\",\n    \"path\": \"/主角信息/零花钱\",\n    \"value\": 0\n  },\n  {\n    \"op\": \"insert\",\n    \"path\": \"/主角信息/魅力值\",\n    \"value\": 0\n  },\n  {\n    \"op\": \"insert\",\n    \"path\": \"/主角信息/精力值\",\n    \"value\": 100\n  },\n  {\n    \"op\": \"insert\",\n    \"path\": \"/主角信息/背包\",\n    \"value\": {}\n  },\n  {\n    \"op\": \"insert\",\n    \"path\": \"/全局/商店\",\n    \"value\": {\n      \"麦芽糖\": {\n        \"物品名\": \"麦芽糖\",\n        \"类型\": \"物品\",\n        \"用途\": \"送给主要角色。送出后该角色好感度+5。小孩和女人都爱吃，谁都拒绝不了。\",\n        \"价格\": 20\n      },\n      \"冰镇汽水\": {\n        \"物品名\": \"冰镇汽水\",\n        \"类型\": \"物品\",\n        \"用途\": \"送给主要角色。送出后该角色好感度+10。三伏天里没有人会拒绝一瓶冰的。\",\n        \"价格\": 40\n      },\n      \"冰毛巾\": {\n        \"物品名\": \"冰毛巾\",\n        \"类型\": \"物品\",\n        \"用途\": \"替她擦汗的借口。可以从后颈一路擦到锁骨，她不好意思拒绝，擦完了还会说一声谢谢。\",\n        \"价格\": 25\n      },\n      \"发绳\": {\n        \"物品名\": \"发绳\",\n        \"类型\": \"物品\",\n        \"用途\": \"送给她。她会顺手把头发扎起来，露出后颈和耳后。夏天里格外好看。\",\n        \"价格\": 30\n      },\n      \"蚊香\": {\n        \"物品名\": \"蚊香\",\n        \"类型\": \"物品\",\n        \"用途\": \"在缘侧或房间里点上，旁边的人会放松下来，警惕值-20。傍晚谁都会凑过来坐。\",\n        \"价格\": 60\n      },\n      \"防晒霜\": {\n        \"物品名\": \"防晒霜\",\n        \"类型\": \"物品\",\n        \"用途\": \"借口帮她涂后背和肩膀，能光明正大地碰到她的皮肤。涂的时候她得把衣领往下拉一点。\",\n        \"价格\": 90\n      },\n      \"浴盐\": {\n        \"物品名\": \"浴盐\",\n        \"类型\": \"物品\",\n        \"用途\": \"丢进浴室的热水里。她泡澡时会放松下来，泡得比平时久，门也容易忘记反锁。\",\n        \"价格\": 120\n      },\n      \"米酒\": {\n        \"物品名\": \"米酒\",\n        \"类型\": \"物品\",\n        \"用途\": \"给苦主喝，他三杯就倒，喝完睡得跟死猪一样。给主要角色喝，她脸红得很快，说话也开始不设防。\",\n        \"价格\": 150\n      },\n      \"手电筒\": {\n        \"物品名\": \"手电筒\",\n        \"类型\": \"道具\",\n        \"用途\": \"夜里出门、进废弃的村分校、走林间小路时用。村里没有路灯。\",\n        \"价格\": 180\n      },\n      \"望远镜\": {\n        \"物品名\": \"望远镜\",\n        \"类型\": \"道具\",\n        \"用途\": \"隔着窗户、树丛或者河对岸，看清远处的人和东西。\",\n        \"价格\": 260\n      },\n      \"小黄书\": {\n        \"物品名\": \"小黄书\",\n        \"类型\": \"道具\",\n        \"用途\": \"使用方式为不小心遗落在她旁边，让她自己捡到、自己翻开。看到之后，该角色恶堕值 +30（当天只能靠它涨一次）。她会红着脸把书塞还给你，接下来几天看你的眼神都不一样。\",\n        \"价格\": 300\n      },\n      \"照相机\": {\n        \"物品名\": \"照相机\",\n        \"类型\": \"道具\",\n        \"用途\": \"趁她在浴室洗澡、在房间换衣服、在厕所时用来偷拍。拍成功一次，那个角色的被偷拍照片+1。\",\n        \"价格\": 500\n      },\n      \"迷魂散\": {\n        \"物品名\": \"迷魂散\",\n        \"类型\": \"道具\",\n        \"用途\": \"悄悄下在饮料或饭菜里。喝下的人会昏睡一到两个钟头，醒来只当自己太累了，绝不会怀疑到{{user}}头上。昏睡期间她对外界毫无知觉，事后也不记得。\",\n        \"价格\": 800\n      }\n    }\n  }\n]\n</JSONPatch>\n</UpdateVariable>\n",
+          "<content>\n九点过半，幸福公寓楼下。\n\n门被推开，你从外面进来。自动门在身后合上，楼道里静下来，只剩顶灯一点电流声。\n\n信箱前站着一个人。\n\n浅金色的长发松松挽着，发尾垂到腰际，一侧鬓边编了一小股细辫。浅紫色的吊带裙外面罩一件米白的薄纱长外套，长到小腿，腰上系一条金色编织的宽腰封。她手里提着一只纸袋，袋口支棱出几枝新鲜的草叶。\n\n她把纸袋往上提了提，侧过脸，眼睛半眯着看你。\n\n{藤宫紫苑}「回来了。」\n\n{藤宫紫苑}「这个点还愿意在外面走的人，都不会太早睡，你说呢。」\n\n她没有问你去哪儿。纸袋也没有递过来——只是往你这边偏了偏，让那点草木的味道散过来一些。\n\n{藤宫紫苑}「薄荷。今晚刚挑的。」\n\n{藤宫紫苑}「睡不着就拿两片泡水。不用还我什么。」\n\n她先上楼了。手腕上那几串细链一级一级地响，很轻，不快也不慢。\n\n二楼转角，203 的门开着一道缝。\n\n一个穿黑色薄外套的女人拎着一袋垃圾出来，看见楼梯上有人，就停下了。她脸上几乎没什么表情，眼睛很清，看你的时候连眉毛都没动。\n\n她把垃圾袋换到另一只手。\n\n{神谷奈绪}「401 的。」\n\n{神谷奈绪}「……301。」\n\n她说完也没解释。垃圾袋留在门口，她人进去了，门缝里漏出的那点光也一起灭了。\n\n三楼是暖黄色的灯。\n\n303 的门开着，粉色长发的女人靠在门框上，头发松松地搭在肩上，手里捏着刚摘下来的发圈。听见楼梯响，她偏过头来。\n\n{桃崎千鹤}「……这个点？」\n\n她把发圈套到手腕上，往你这边走了两步，又停住。\n\n{桃崎千鹤}「你冰箱里有东西吗？没有的话，我这儿有。」\n\n她说得很随意，说完自己先笑了一下，抬手把门往里推了推，让出一点光。\n\n{桃崎千鹤}「我煮了东西，还剩一点。要是空着，就来敲我的门。」\n\n再往里走半条走廊，就是自己那扇门。\n\n钥匙转了两圈，门开了。屋里没开灯，街灯从窗帘缝里漏进来，把沙发和茶几的轮廓描出个大概。\n\n门在身后合上，走廊的光被切断。\n\n今晚到这里就结束了。\n</content>\n\n<重要记忆>无</重要记忆>\n\n<后台推演>\n［本回合移动检定］藤宫紫苑:未定｜神谷奈绪:未定｜桃崎千鹤:未定\n1.藤宫紫苑:\n地点:公寓4楼走廊-407号房\n正在做:娱乐\n具体正在做:把纸袋里的薄荷剪齐，一枝一枝插进阳台的玻璃罐里，薄纱外套还挂在身上没脱\n心里话:我说“这个点还愿意在外面走的人”，其实只是想让他停下来一秒。他没停也行，薄荷本来就是多买的。\n2.神谷奈绪:\n地点:公寓2楼走廊-203号门\n正在做:休息\n具体正在做:把垃圾袋留在门口，回身带上门，屋里一直没开灯\n心里话:这话说给谁听都一样，说完了我就回去。他要是真的上来，那就让他上来。\n3.桃崎千鹤:\n地点:公寓3楼走廊-303号房\n正在做:下厨\n具体正在做:把门虚掩着留一条缝，转身回厨房去看锅里剩下的那点汤\n心里话:我说“我这儿有”，其实我这儿也只有剩的。他真要来敲门，我可以现做。\n</后台推演>\n\n<UpdateVariable>\n<Analysis>\n- Time passed: 开局，时间是第一天晚上二十一点四十。\n- Dramatic update: No.\n- Variable analysis:\n  - 开局建档：公寓篇 3 位主要角色全部写入（好感度全部 20，恶堕值全部 0）。\n  - 公寓篇是纯爱线，苦主列表不需要建档。\n  - 当前篇章设为公寓；主角已经回到 301，三位女主各自留在自己那一层。\n  - 三人「在场状态」全部 false：接下来是玩家自己在屋里的一夜。\n</Analysis>\n<JSONPatch>[{\"op\":\"replace\",\"path\":\"/时间/年份\",\"value\":2018},{\"op\":\"replace\",\"path\":\"/时间/月份\",\"value\":7},{\"op\":\"replace\",\"path\":\"/时间/日期\",\"value\":28},{\"op\":\"replace\",\"path\":\"/时间/精确时间\",\"value\":\"21:40\"},{\"op\":\"replace\",\"path\":\"/全局/当前篇章\",\"value\":\"公寓\"},{\"op\":\"insert\",\"path\":\"/主要角色列表/藤宫紫苑\",\"value\":{\"姓名\":\"藤宫紫苑\",\"心里话\":\"我说“这个点还愿意在外面走的人”，其实只是想让他停下来一秒。他没停也行，薄荷本来就是多买的。\",\"好感度\":20,\"小穴\":\"饱满柔软，颜色偏浅。\",\"奶子\":\"G罩杯，饱满柔软，乳晕是温润的浅褐。\",\"足部\":\"白皙，脚背高，脚趾修长。\",\"大腿\":\"丰满，线条柔和。\",\"警惕值\":0,\"恶堕值\":0,\"被偷拍照片\":0,\"地点\":\"公寓4楼走廊-407号房\",\"在场状态\":false,\"正在做\":\"娱乐\",\"具体正在做\":\"把纸袋里的薄荷剪齐，一枝一枝插进阳台的玻璃罐里，薄纱外套还挂在身上没脱\",\"穿着\":\"浅紫色吊带长裙，米白色薄纱长外套，金色编织宽腰封\"}},{\"op\":\"insert\",\"path\":\"/主要角色列表/神谷奈绪\",\"value\":{\"姓名\":\"神谷奈绪\",\"心里话\":\"他住 301。我明明知道，还是问了。这句说给谁听都一样，说完了我就回去。\",\"好感度\":20,\"小穴\":\"饱满柔软，颜色浅。\",\"奶子\":\"E罩杯，圆水滴形，乳晕浅粉。\",\"足部\":\"白皙纤秀。\",\"大腿\":\"线条柔软，被长裙遮着。\",\"警惕值\":0,\"恶堕值\":0,\"被偷拍照片\":0,\"地点\":\"公寓2楼走廊-203号门\",\"在场状态\":false,\"正在做\":\"休息\",\"具体正在做\":\"把垃圾袋留在门口，回身带上门，屋里一直没开灯\",\"穿着\":\"黑色轻薄长袖外套，内搭低领白色背心，淡黄色包臀长裙\"}},{\"op\":\"insert\",\"path\":\"/主要角色列表/桃崎千鹤\",\"value\":{\"姓名\":\"桃崎千鹤\",\"心里话\":\"我说“我这儿有”，其实我这儿也只有剩的。他真要来敲门，我可以现做。\",\"好感度\":20,\"小穴\":\"饱满干净，颜色浅。\",\"奶子\":\"E罩杯，饱满挺立，乳晕浅粉。\",\"足部\":\"白皙，脚背好看。\",\"大腿\":\"匀称柔软，线条舒展。\",\"警惕值\":0,\"恶堕值\":0,\"被偷拍照片\":0,\"地点\":\"公寓3楼走廊-303号房\",\"在场状态\":false,\"正在做\":\"下厨\",\"具体正在做\":\"把门虚掩着留一条缝，转身回厨房去看锅里剩下的那点汤\",\"穿着\":\"宽松的浅色针织衫配家居长裤，粉色长发半披在肩上\"}},{\"op\":\"insert\",\"path\":\"/主要角色列表/水野千晴\",\"value\":{\"姓名\":\"水野千晴\",\"心里话\":\"今天锅里又多煮了一份……大概只是习惯吧。\",\"剧情线\":\"初始日常\",\"好感度\":20,\"小穴\":\"柔软温润。\",\"奶子\":\"G罩杯，白皙柔软，乳晕淡粉。\",\"足部\":\"白皙纤秀。\",\"大腿\":\"线条柔和。\",\"警惕值\":0,\"恶堕值\":0,\"被偷拍照片\":0,\"地点\":\"公寓3楼走廊-305号房\",\"在场状态\":false,\"正在做\":\"做家务\",\"具体正在做\":\"端着刚擦干净的窗台抹布，听见楼梯响，回头看了一眼\",\"穿着\":\"淡色系棉麻长裙，外面搭一条半身围裙\"}},{\"op\":\"insert\",\"path\":\"/主要角色列表/白坂结奈\",\"value\":{\"姓名\":\"白坂结奈\",\"心里话\":\"弟弟总算搬来了这栋楼，以后想见他连车都不用开。\",\"剧情线\":\"初始日常\",\"好感度\":90,\"小穴\":\"饱满柔软。\",\"奶子\":\"E罩杯，丰满白皙。\",\"足部\":\"精致优美。\",\"大腿\":\"白皙嫩滑。\",\"警惕值\":0,\"恶堕值\":80,\"被偷拍照片\":0,\"地点\":\"公寓2楼走廊-201号门\",\"在场状态\":false,\"正在做\":\"做家务\",\"具体正在做\":\"在 201 里把最后一摞纸箱推到墙边，直起腰抹了把汗\",\"穿着\":\"白色宽松长袖T恤（圆领、袖子挽到小臂），下身蓝色牛仔短裤（裤脚翻边），腿上黑色薄丝袜\"}},{\"op\":\"insert\",\"path\":\"/主角信息/地点\",\"value\":\"301室-客厅\"},{\"op\":\"insert\",\"path\":\"/主角信息/零花钱\",\"value\":0},{\"op\":\"insert\",\"path\":\"/主角信息/魅力值\",\"value\":0},{\"op\":\"insert\",\"path\":\"/主角信息/精力值\",\"value\":60},{\"op\":\"insert\",\"path\":\"/主角信息/背包\",\"value\":{}}]</JSONPatch>\n</UpdateVariable>\n",
+          "<content>\n来之前，你在山脚的镇子上听过三桩旧事。说的人当故事讲，你也就当故事听。\n\n一则说山脚有座小寺。雪后有个女尼在檐下拾到一只冻僵的白狐，抱进屋，用旧棉布裹着，一日一餐喂到它能走。狐伤好了没走，从此替她看门；她老去，它送完最后一程，还在守着那座寺。后来寺成了神社，它也没走。\n\n一则说更深的山里有一棵老杉，几个人合抱不过来，神社年年给它换新的注连绳。树里住着东西——不是神，也不是鬼，是这片谷地本身的那点意思。人不折它的枝、不剥它的皮、把带上山的东西一样不落地带下山，进山就总能在雾里摸回鸟居。\n\n最后一则最短：有一座小神社，本殿后头在夏天最安静的午后会多出一条小路，草叶压得平平的，像被人走了很多年。顺着走进去是一片没有殿、没有神像的空地。那儿什么都不给——不能合掌，不能投钱，不能在心里说「希望」。说了的人，就留在里头了。\n\n天还亮着。\n\n去看看。\n\n后来你确实走得不远。先在山脚的镇子转了一圈，看见石阶就往上，看见岔路就挑难走的那条，想着太阳还高，走两步总能回来。等发觉不对，是身后那条能走车的道不见了，只剩脚下的土和两边的树；再回头，来时那道缓坡变成了一面坡，坡上一棵树都不认得。\n\n你喊了两声。声音掉进林子里，没有回音。\n\n你开始往回走，方向自己也不太确定——刚才太阳在左边，现在太阳不见了。林子暗下来，蝉声贴着耳朵响，密得让人有点发慌。你越走越快，最后干脆跑起来，枯叶在脚下咔嚓咔嚓地碎，跑过一段石阶时差点绊倒，扶住旁边的石头才站稳。\n\n石头是干的。可你手上沾了一点水。\n\n你抬起头。\n\n不知不觉间，你误闯了这片深山。\n\n四下里没有一点声音，来时的路已经被山雾埋掉了。转过一个弯，眼前忽然出现一整排朱红的鸟居，一重接着一重，顺着石阶一直排进山里，望不到头。\n\n你顺着鸟居往里走。走到第七重的时候，你回头看了一眼——来路上那截柏油路不见了，只剩下同一排鸟居，朝山下的方向一重一重延伸出去，尽头是白茫茫的雾。\n\n你笑了一下。这大概是梦。\n\n你捏了捏自己的手臂。有点疼。\n\n{神代凛音}「站在那儿不动，是想走，还是不敢走？」\n\n一个黑发的女人站在石阶上方看着你。赤红的眼睛，一点多余的表情都没有。她穿巫女服，袖口挽得很整齐，像是已经站在那里很久了。\n\n{神代凛音}「往两边走也是一样的。往下走、往上走，都会回到这里。」\n\n{神代凛音}「所以，一天只准去一次。记住了？」\n\n她说完就转身往里走，好像并不需要你回答。\n\n你追了两步，想问清楚这到底是不是在做梦。绕过鸟居尽头那道石阶，眼前一下子开阔：一片铺着细石的前庭，石灯笼一盏接一盏，正殿的屋檐压着天光——这座神社，比从外面看要大得多。\n\n前庭角落传来木勺碰石缸的轻响。一个绿发中分的女人正在洗手亭边绞着布巾。她抬头看见你，愣了一下，随即眉眼全部软下来。\n\n{斋宫若叶}「哎呀……又有人进来了。」\n\n{斋宫若叶}「先别急，站着别动，让我看看你身上有没有摔着。」\n\n她放下布巾走过来，绕着你转了一圈，抬手把你肩上沾的一片落叶拂掉，自然得像在照顾一个熟人。\n\n不远处的木阶上还坐着第三个人。银色的头发剪得很齐，赤红的眼睛半睁着，手里捧着一只白瓷小碗，正一小口一小口地喝甜酒。她从头到尾都看着你，却什么也没说。\n\n过了好一会儿，她才开口。\n\n{月读澪}「喝吗。」\n\n她把碗往外推了推。不是递过来，只是推了推。\n\n往神社后头走，石阶旁有一段泥土是松的。上面落着一串脚印——不是人的，五瓣，梅花形，一步一步，往山里去了。你盯着看了一会儿，那串印子边缘的水光正在退，好像才刚踩下去。\n\n再往里，林子忽然静了一下，又恢复。你脚下那段本该湿滑的坡，不知怎么好走了些；一根横在路上的枯枝被挪到了边上，断口很新。\n\n你回头看前庭。三个人都没有跟过来，也没往这个方向看一眼。像是这种事一直在这里发生。\n\n你试着再一次走回鸟居那头。沿着长廊一直往下走，走了很久，石阶在脚下一重一重过去，雾越来越近——然后你抬头，看见的又是那片铺着细石的前庭，和那盏一直没熄的石灯笼。\n\n三个人都在原地等着你，像是早就知道你会折回来。\n\n{神代凛音}「……我说过了。」\n\n{斋宫若叶}「今天就别走了。天要黑了。」\n\n{月读澪}「客房有余。」\n\n你站在前庭中央，鞋底还沾着山道上的泥。三个人都在看你，等你先说一句什么。\n\n也许这真的是一场梦。\n</content>\n\n<重要记忆>无</重要记忆>\n\n<后台推演>\n［本回合移动检定］神代凛音:未定｜月读澪:未定｜斋宫若叶:未定\n1.神代凛音:\n地点:神龛佛堂外\n正在做:与user互动\n具体正在做:站在石阶上方说完“一天只准去一次”就转身往里走\n心里话:走不出去的。上一个在这里转了一整夜的人，最后也是主动回来的。\n2.月读澪:\n地点:神社小铺外\n正在做:娱乐\n具体正在做:坐在木阶上喝甜酒，把碗往外推了推又收回来\n心里话:他没有接。那碗我喝完了，明天再倒一碗，还放在这里。\n3.斋宫若叶:\n地点:神龛佛堂外\n正在做:与user互动\n具体正在做:放下布巾走过来，绕着他转了一圈，拂掉他肩上的落叶\n心里话:真可怜，鞋上全是泥。客房得先烧一盆热水，再拿一床厚褥子。\n</后台推演>\n\n<UpdateVariable>\n<Analysis>\n- Time passed: 开局，时间是第一天傍晚十七点二十。\n- Dramatic update: Yes.（{{user}} 误入神社结界，第一次尝试沿鸟居长廊离开未果，被三位巫女留下）\n- Variable analysis:\n  - 开局建档：神社篇 5 位主要角色写入 —— 三位巫女 + 白蔵主 + 御神木之灵（好感度全部 20，恶堕值全部 0）。\n  - 神社篇是封闭秘境线，三位都是巫女，**没有苦主**，苦主列表不需要建档。\n  - 当前篇章设为神社，玩家位置在鸟居长廊。\n</Analysis>\n<JSONPatch>\n[\n  {\n    \"op\": \"replace\",\n    \"path\": \"/时间/年份\",\n    \"value\": 2018\n  },\n  {\n    \"op\": \"replace\",\n    \"path\": \"/时间/月份\",\n    \"value\": 7\n  },\n  {\n    \"op\": \"replace\",\n    \"path\": \"/时间/日期\",\n    \"value\": 30\n  },\n  {\n    \"op\": \"replace\",\n    \"path\": \"/时间/精确时间\",\n    \"value\": \"17:20\"\n  },\n  {\n    \"op\": \"replace\",\n    \"path\": \"/全局/当前篇章\",\n    \"value\": \"神社\"\n  },\n  {\n    \"op\": \"replace\",\n    \"path\": \"/全局/商店\",\n    \"value\": {}\n  },\n  {\n    \"op\": \"replace\",\n    \"path\": \"/苦主列表\",\n    \"value\": {}\n  },\n  {\n    \"op\": \"insert\",\n    \"path\": \"/主要角色列表/神代凛音\",\n    \"value\": {\n      \"姓名\": \"神代凛音\",\n      \"心里话\": \"走不出去的。上一个在这里转了一整夜的人，最后也是主动回来的。\",\n      \"剧情线\": \"初始日常\",\n      \"好感度\": 20,\n      \"小穴\": \"紧致干净，颜色浅。\",\n      \"奶子\": \"E罩杯，形状挺拔，乳晕是浅红色。\",\n      \"足部\": \"白皙，足弓好看，脚趾修长。\",\n      \"大腿\": \"修长笔直，包裹在巫女服下。\",\n      \"警惕值\": 0,\n      \"恶堕值\": 0,\n      \"被偷拍照片\": 0,\n      \"地点\": \"神龛佛堂外\",\n      \"在场状态\": true,\n      \"正在做\": \"与user互动\",\n      \"具体正在做\": \"站在石阶上方说完“一天只准去一次”就转身往里走\",\n      \"穿着\": \"标准巫女服，上白下绯，袖口挽得整齐，黑色长发垂在背后\"\n    }\n  },\n  {\n    \"op\": \"insert\",\n    \"path\": \"/主要角色列表/月读澪\",\n    \"value\": {\n      \"姓名\": \"月读澪\",\n      \"心里话\": \"他没有接。那碗我喝完了，明天再倒一碗，还放在这里。\",\n      \"剧情线\": \"初始日常\",\n      \"好感度\": 20,\n      \"小穴\": \"干净，颜色浅。\",\n      \"奶子\": \"E罩杯，柔软饱满，乳晕浅粉。\",\n      \"足部\": \"白皙纤秀，脚踝很细。\",\n      \"大腿\": \"白皙，线条柔软。\",\n      \"警惕值\": 0,\n      \"恶堕值\": 0,\n      \"被偷拍照片\": 0,\n      \"地点\": \"神社小铺外\",\n      \"在场状态\": true,\n      \"正在做\": \"娱乐\",\n      \"具体正在做\": \"坐在木阶上喝甜酒，把碗往外推了推又收回来\",\n      \"穿着\": \"巫女服，上白下绯，银发剪得很齐，半睁着眼睛\"\n    }\n  },\n  {\n    \"op\": \"insert\",\n    \"path\": \"/主要角色列表/斋宫若叶\",\n    \"value\": {\n      \"姓名\": \"斋宫若叶\",\n      \"心里话\": \"真可怜，鞋上全是泥。客房得先烧一盆热水，再拿一床厚褥子。\",\n      \"剧情线\": \"初始日常\",\n      \"好感度\": 20,\n      \"小穴\": \"柔软干净。\",\n      \"奶子\": \"E罩杯，丰满圆润，乳晕是温润的淡粉色。\",\n      \"足部\": \"白皙圆润，脚背很好看。\",\n      \"大腿\": \"丰腴白皙，走路时裙下曲线会轻轻晃动。\",\n      \"警惕值\": 0,\n      \"恶堕值\": 0,\n      \"被偷拍照片\": 0,\n      \"地点\": \"神龛佛堂外\",\n      \"在场状态\": true,\n      \"正在做\": \"与user互动\",\n      \"具体正在做\": \"放下布巾走过来，绕着他转了一圈，拂掉他肩上的落叶\",\n      \"穿着\": \"巫女服，上白下绯，绿发中分垂到腰后\"\n    }\n  },\n  {\n    \"op\": \"insert\",\n    \"path\": \"/主要角色列表/白蔵主\",\n    \"value\": {\n      \"姓名\": \"白蔵主\",\n      \"心里话\": \"今天没有人带斧头上山。\",\n      \"剧情线\": \"初始日常\",\n      \"好感度\": 20,\n      \"小穴\": \"\",\n      \"奶子\": \"\",\n      \"足部\": \"\",\n      \"大腿\": \"\",\n      \"警惕值\": 0,\n      \"恶堕值\": 0,\n      \"被偷拍照片\": 0,\n      \"地点\": \"后山·苔庭与石组\",\n      \"在场状态\": false,\n      \"正在做\": \"娱乐\",\n      \"具体正在做\": \"在松土上留下一串还没干透的五瓣梅花印，往山里去了\",\n      \"穿着\": \"白狐形态，通体白毛，尾尖一点淡灰\"\n    }\n  },\n  {\n    \"op\": \"insert\",\n    \"path\": \"/主要角色列表/御神木之灵\",\n    \"value\": {\n      \"姓名\": \"御神木之灵\",\n      \"心里话\": \"这孩子跑得上气不接下气。那段坡，替他弄平一点吧。\",\n      \"剧情线\": \"初始日常\",\n      \"好感度\": 20,\n      \"小穴\": \"\",\n      \"奶子\": \"\",\n      \"足部\": \"\",\n      \"大腿\": \"\",\n      \"警惕值\": 0,\n      \"恶堕值\": 0,\n      \"被偷拍照片\": 0,\n      \"地点\": \"后山林道·苔石与老杉\",\n      \"在场状态\": false,\n      \"正在做\": \"娱乐\",\n      \"具体正在做\": \"把一根断口很新的枯枝挪到路边，让那段坡忽然好走了些\",\n      \"穿着\": \"没有人影可看，只有林间一层说不清的安静\"\n    }\n  },\n  {\n    \"op\": \"replace\",\n    \"path\": \"/主角信息/地点\",\n    \"value\": \"鸟居长廊\"\n  },\n  {\n    \"op\": \"replace\",\n    \"path\": \"/主角信息/零花钱\",\n    \"value\": 0\n  },\n  {\n    \"op\": \"replace\",\n    \"path\": \"/主角信息/魅力值\",\n    \"value\": 0\n  },\n  {\n    \"op\": \"replace\",\n    \"path\": \"/主角信息/精力值\",\n    \"value\": 80\n  },\n  {\n    \"op\": \"replace\",\n    \"path\": \"/主角信息/背包\",\n    \"value\": {}\n  }\n]\n</JSONPatch>\n</UpdateVariable>\n"
+        ],
+        "depthPrompt": {
+          "prompt": "",
+          "depth": 4,
+          "role": "system"
+        },
+        "extensions": {
+          "regex_scripts": [
+            {
+              "id": 1000,
+              "scriptName": "[同层] 系统契约标签·闭合全域融合过滤",
+              "findRegex": "/<\\s*(后台推演|UpdateVariable|Analysis|JSONPatch|重要记忆|连携转移|地点|SystemDicePool|插图|在场人物)(?=[\\s>])[^>]*>[\\s\\S]*?<\\/\\1\\s*>/gi",
+              "replaceString": "<!-- 系统契约块已融合过滤 -->\n",
+              "trimStrings": [],
+              "placement": [
+                2
+              ],
+              "disabled": false,
+              "markdownOnly": true,
+              "promptOnly": false,
+              "runOnEdit": false,
+              "substituteRegex": false,
+              "minDepth": null,
+              "maxDepth": null
+            },
+            {
+              "id": 1001,
+              "scriptName": "[同层] 系统契约标签·未闭合流式融合过滤",
+              "findRegex": "/<\\s*(后台推演|UpdateVariable|Analysis|JSONPatch|重要记忆|连携转移|地点|SystemDicePool|插图|在场人物)(?=[\\s>])[^>]*>[\\s\\S]*$/i",
+              "replaceString": "<!-- 未闭合系统块已融合过滤 -->\n",
+              "trimStrings": [],
+              "placement": [
+                2
+              ],
+              "disabled": false,
+              "markdownOnly": true,
+              "promptOnly": false,
+              "runOnEdit": false,
+              "substituteRegex": false,
+              "minDepth": null,
+              "maxDepth": null
+            },
+            {
+              "id": 1002,
+              "scriptName": "[同层] 全系思维链CoT标签外壳融合过滤",
+              "findRegex": "/<\\/?(think|thinking|thought|Interleaving|reasoning|cot|scratchpad|antmlThinking|antml_thinking|inner_thought|chain_of_thought)(?=[\\s>/])[^>]*>/gi",
+              "replaceString": "",
+              "trimStrings": [],
+              "placement": [
+                2
+              ],
+              "disabled": false,
+              "markdownOnly": true,
+              "promptOnly": false,
+              "runOnEdit": false,
+              "substituteRegex": false,
+              "minDepth": null,
+              "maxDepth": null
+            },
+            {
+              "id": 1003,
+              "scriptName": "[同层] 正文裁剪·仅发送最近3个AI楼",
+              "findRegex": "/<\\s*对话框显示(?=[\\s>])[^>]*>[\\s\\S]*?(?:<\\s*\\/\\s*对话框显示\\s*>|$)/gi",
+              "replaceString": "<!-- 正文已裁剪：只保留最近3个AI楼 -->",
+              "trimStrings": [],
+              "placement": [
+                2
+              ],
+              "disabled": false,
+              "markdownOnly": false,
+              "promptOnly": true,
+              "runOnEdit": false,
+              "substituteRegex": false,
+              "minDepth": 3,
+              "maxDepth": null
+            },
+            {
+              "scriptName": "[同层] 内容标签显示层隐藏",
+              "findRegex": "/<\\s*\\/?\\s*对话框显示(?=[\\s>])[^>]*>/gi",
+              "replaceString": "",
+              "disabled": false,
+              "markdownOnly": true,
+              "promptOnly": false,
+              "runOnEdit": false,
+              "placement": [
+                2
+              ],
+              "trimStrings": [],
+              "substituteRegex": false,
+              "id": 1004
+            },
+            {
+              "id": 1005,
+              "scriptName": "[非同层] 夏越村·去掉变量更新块",
+              "disabled": true,
+              "runOnEdit": false,
+              "findRegex": "/<UpdateVariable>[\\s\\S]*?<\\/UpdateVariable>/gi",
+              "replaceString": "<!-- 变量更新块：MVU 处理完成 -->",
+              "placement": [
+                2
+              ],
+              "substituteRegex": 0,
+              "markdownOnly": true,
+              "promptOnly": false
+            },
+            {
+              "id": 1006,
+              "scriptName": "[非同层] 夏越村·去掉变量更新块（没闭合）",
+              "disabled": true,
+              "runOnEdit": false,
+              "findRegex": "/<UpdateVariable>[\\s\\S]*$/i",
+              "replaceString": "<!-- 变量更新块：未闭合已过滤 -->",
+              "placement": [
+                2
+              ],
+              "substituteRegex": 0,
+              "markdownOnly": true,
+              "promptOnly": false
+            },
+            {
+              "id": 1007,
+              "scriptName": "[非同层] 夏越村·去掉思维链标签",
+              "disabled": true,
+              "runOnEdit": false,
+              "findRegex": "/<\\/?(think|thinking|thought|Interleaving)>/gi",
+              "replaceString": "",
+              "placement": [
+                2
+              ],
+              "substituteRegex": 0,
+              "markdownOnly": true,
+              "promptOnly": false
+            },
+            {
+              "id": 1008,
+              "scriptName": "[非同层] 只发送最新3楼的变量更新",
+              "disabled": true,
+              "runOnEdit": false,
+              "findRegex": "/<UpdateVariable>[\\s\\S]*?<\\/UpdateVariable>/gm",
+              "replaceString": "",
+              "placement": [
+                2
+              ],
+              "substituteRegex": 0,
+              "minDepth": 3,
+              "maxDepth": null,
+              "markdownOnly": false,
+              "promptOnly": true
+            },
+            {
+              "id": 1009,
+              "scriptName": "[非同层] 插图",
+              "findRegex": "/<插图>[\\s\\S]*?(?:图床[:：])\\s*<?([a-zA-Z]+:\\/\\/[^\\r\\n<>\"]+?)>?\\s*<\\/插图>/gi",
+              "replaceString": "<div align=\"center\" style=\"margin: 12px 0;\"><img src=\"$1\" referrerpolicy=\"no-referrer\" style=\"max-width: 85%; border-radius: 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.3); display: block;\" /></div>",
+              "trimStrings": [],
+              "placement": [
+                2
+              ],
+              "disabled": true,
+              "markdownOnly": true,
+              "promptOnly": false,
+              "runOnEdit": true,
+              "substituteRegex": 0,
+              "minDepth": null,
+              "maxDepth": null
+            },
+            {
+              "id": 1100,
+              "scriptName": "[共用] 后台推演·显示层隐藏",
+              "findRegex": "/<\\s*后台推演[^>]*>[\\s\\S]*?<\\s*\\/\\s*后台推演\\s*>/gi",
+              "replaceString": "",
+              "trimStrings": [],
+              "placement": [
+                2
+              ],
+              "disabled": false,
+              "markdownOnly": true,
+              "promptOnly": false,
+              "runOnEdit": true,
+              "substituteRegex": false,
+              "minDepth": null,
+              "maxDepth": null
+            },
+            {
+              "id": 1101,
+              "scriptName": "[共用] 后台推演·只发最近3楼",
+              "findRegex": "/<\\s*后台推演[^>]*>[\\s\\S]*?<\\s*\\/\\s*后台推演\\s*>/gi",
+              "replaceString": "",
+              "trimStrings": [],
+              "placement": [
+                2
+              ],
+              "disabled": false,
+              "markdownOnly": false,
+              "promptOnly": true,
+              "runOnEdit": true,
+              "substituteRegex": false,
+              "minDepth": 3,
+              "maxDepth": null
+            },
+            {
+              "id": 1102,
+              "scriptName": "[共用] 重要记忆·显示层隐藏",
+              "findRegex": "/<\\s*重要记忆[^>]*>[\\s\\S]*?<\\s*\\/\\s*重要记忆\\s*>/gi",
+              "replaceString": "",
+              "trimStrings": [],
+              "placement": [
+                2
+              ],
+              "disabled": false,
+              "markdownOnly": true,
+              "promptOnly": false,
+              "runOnEdit": true,
+              "substituteRegex": false,
+              "minDepth": null,
+              "maxDepth": null
+            },
+            {
+              "id": 1103,
+              "scriptName": "[共用] 重要记忆·只发最近3楼",
+              "findRegex": "/<\\s*重要记忆[^>]*>[\\s\\S]*?<\\s*\\/\\s*重要记忆\\s*>/gi",
+              "replaceString": "",
+              "trimStrings": [],
+              "placement": [
+                2
+              ],
+              "disabled": false,
+              "markdownOnly": false,
+              "promptOnly": true,
+              "runOnEdit": true,
+              "substituteRegex": false,
+              "minDepth": 3,
+              "maxDepth": null
+            }
+          ]
+        }
       }
     }
   ],
@@ -139,248 +388,603 @@ window.__ModuleLoader__.load({
     }
   }
 };
+    const STORE_KEY = 'dsh-tt:v2';
+    const RP_PREFIX = 'RP · ';
 
-    // apply() 里绑定到 ctx.layout.selectPanel(null)，面板本身拿不到 ctx。
-    let goConversation = () => {};
+    // ───────────────────────────── 样式 ─────────────────────────────
+    const CSS = `
+      .tt-root{height:100%;display:flex;flex-direction:column;overflow:hidden;
+        color:var(--dsw-alias-text-primary,#1c1c1e);background:var(--dsw-alias-background-primary,#fff);
+        font-family:var(--dsw-font-family-ui,-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",sans-serif);
+        -webkit-font-smoothing:antialiased;}
+      .tt-top{height:44px;flex:none;display:flex;align-items:center;gap:10px;padding:0 12px;
+        border-bottom:1px solid var(--dsw-alias-border-secondary,rgba(0,0,0,.08));
+        background:var(--dsw-alias-background-secondary,rgba(246,246,248,.86));
+        backdrop-filter:saturate(180%) blur(18px);-webkit-backdrop-filter:saturate(180%) blur(18px);}
+      .tt-brand{display:flex;align-items:center;gap:6px;font-size:13px;font-weight:600;letter-spacing:-.01em;}
+      .tt-spacer{flex:1;}
+      .tt-chip{display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 9px;border-radius:7px;
+        border:1px solid var(--dsw-alias-border-secondary,rgba(0,0,0,.1));
+        background:var(--dsw-alias-background-primary,#fff);font-size:12px;color:inherit;cursor:pointer;
+        max-width:200px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+        transition:transform 140ms cubic-bezier(.23,1,.32,1),background 140ms ease;}
+      .tt-chip:hover{background:var(--dsw-alias-background-tertiary,rgba(0,0,0,.04));}
+      .tt-chip:active{transform:scale(.97);}
+      .tt-chip select{border:0;background:transparent;font:inherit;color:inherit;outline:none;max-width:150px;}
+      .tt-body{flex:1;display:flex;min-height:0;}
+      .tt-side{width:248px;flex:none;display:flex;flex-direction:column;min-height:0;
+        border-right:1px solid var(--dsw-alias-border-secondary,rgba(0,0,0,.08));
+        background:var(--dsw-alias-background-secondary,rgba(250,250,252,.9));}
+      .tt-new{margin:10px 10px 6px;height:30px;border-radius:8px;border:0;cursor:pointer;font:inherit;font-size:12.5px;
+        background:var(--dsw-alias-background-accent,#0a84ff);color:#fff;font-weight:500;
+        transition:transform 140ms cubic-bezier(.23,1,.32,1),filter 140ms ease;}
+      .tt-new:active{transform:scale(.98);filter:brightness(.95);}
+      .tt-list{flex:1;overflow-y:auto;padding:0 6px 6px;}
+      .tt-row{display:flex;flex-direction:column;gap:2px;width:100%;text-align:left;border:0;border-radius:8px;
+        padding:7px 9px;margin:1px 0;background:transparent;cursor:pointer;font:inherit;color:inherit;}
+      .tt-row:hover{background:var(--dsw-alias-background-tertiary,rgba(0,0,0,.05));}
+      .tt-row.on{background:var(--dsw-alias-background-primary,#fff);box-shadow:0 1px 3px rgba(0,0,0,.08),0 0 0 1px rgba(0,0,0,.06);}
+      .tt-row b{font-size:12.5px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+      .tt-row span{font-size:11px;opacity:.55;}
+      .tt-tabs{display:flex;gap:2px;padding:6px;border-top:1px solid var(--dsw-alias-border-secondary,rgba(0,0,0,.08));}
+      .tt-tab{flex:1;height:26px;border:0;border-radius:6px;background:transparent;font:inherit;font-size:11px;
+        color:inherit;opacity:.7;cursor:pointer;}
+      .tt-tab:hover{background:var(--dsw-alias-background-tertiary,rgba(0,0,0,.05));opacity:1;}
+      .tt-tab.on{background:var(--dsw-alias-background-primary,#fff);opacity:1;font-weight:600;
+        box-shadow:0 1px 2px rgba(0,0,0,.08);}
+      .tt-main{flex:1;display:flex;flex-direction:column;min-width:0;min-height:0;}
+      .tt-pane{flex:1;overflow:auto;padding:18px 22px;}
+      .tt-chat{flex:1;overflow-y:auto;padding:16px 22px 8px;scroll-behavior:smooth;}
+      .tt-fl{display:flex;gap:10px;margin-bottom:14px;align-items:flex-start;}
+      .tt-av{width:26px;height:26px;flex:none;border-radius:50%;display:grid;place-items:center;
+        font-size:11px;font-weight:600;color:#fff;background:var(--dsw-alias-background-accent,#0a84ff);
+        box-shadow:0 1px 2px rgba(0,0,0,.15);}
+      .tt-bub{min-width:0;flex:1;font-size:13.5px;line-height:1.72;word-break:break-word;}
+      .tt-bub p{margin:0 0 .6em;}
+      .tt-bub p:last-child{margin-bottom:0;}
+      .tt-bub code{font-family:var(--dsw-font-family-mono,ui-monospace,Menlo,monospace);font-size:12px;
+        background:var(--dsw-alias-background-tertiary,rgba(0,0,0,.05));padding:1px 4px;border-radius:4px;}
+      .tt-bub pre{background:var(--dsw-alias-background-tertiary,rgba(0,0,0,.05));padding:10px 12px;border-radius:8px;
+        overflow:auto;font-size:12px;line-height:1.55;}
+      .tt-bub blockquote{margin:.4em 0;padding-left:10px;border-left:3px solid var(--dsw-alias-border-secondary,rgba(0,0,0,.15));opacity:.8;}
+      .tt-meta{font-size:11px;opacity:.45;margin-bottom:3px;}
+      .tt-comp{flex:none;padding:8px 16px 14px;border-top:1px solid var(--dsw-alias-border-secondary,rgba(0,0,0,.06));}
+      .tt-box{border-radius:12px;border:1px solid var(--dsw-alias-border-secondary,rgba(0,0,0,.12));
+        background:var(--dsw-alias-background-primary,#fff);padding:8px 10px;display:flex;flex-direction:column;gap:6px;
+        box-shadow:0 1px 2px rgba(0,0,0,.04);}
+      .tt-ta{width:100%;min-height:38px;max-height:180px;resize:none;border:0;outline:none;background:transparent;
+        font:inherit;font-size:13.5px;line-height:1.6;color:inherit;}
+      .tt-bar{display:flex;align-items:center;gap:4px;}
+      .tt-ic{width:26px;height:26px;border:0;border-radius:6px;background:transparent;cursor:pointer;font-size:14px;
+        color:inherit;opacity:.6;display:grid;place-items:center;}
+      .tt-ic:hover{background:var(--dsw-alias-background-tertiary,rgba(0,0,0,.05));opacity:1;}
+      .tt-send{height:26px;padding:0 12px;border:0;border-radius:6px;background:var(--dsw-alias-background-accent,#0a84ff);
+        color:#fff;font:inherit;font-size:12.5px;font-weight:500;cursor:pointer;}
+      .tt-send:disabled{opacity:.4;cursor:default;}
+      .tt-h{font-size:16px;font-weight:600;margin:0 0 4px;letter-spacing:-.01em;}
+      .tt-sub{font-size:12px;opacity:.55;margin:0 0 18px;}
+      .tt-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px;}
+      .tt-card{border:1px solid var(--dsw-alias-border-secondary,rgba(0,0,0,.1));border-radius:10px;padding:12px;
+        background:var(--dsw-alias-background-primary,#fff);cursor:pointer;transition:transform 140ms cubic-bezier(.23,1,.32,1);}
+      .tt-card:hover{box-shadow:0 2px 10px rgba(0,0,0,.07);}
+      .tt-card:active{transform:scale(.99);}
+      .tt-card.on{border-color:var(--dsw-alias-background-accent,#0a84ff);box-shadow:0 0 0 1px var(--dsw-alias-background-accent,#0a84ff);}
+      .tt-card b{display:block;font-size:13px;margin-bottom:2px;}
+      .tt-card small{font-size:11px;opacity:.55;display:block;line-height:1.5;}
+      .tt-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:8px;
+        font-size:12.5px;opacity:.5;text-align:center;padding:0 30px;line-height:1.7;}
+      .tt-diag{font-family:var(--dsw-font-family-mono,ui-monospace,monospace);font-size:11px;line-height:1.6;
+        background:var(--dsw-alias-background-tertiary,rgba(0,0,0,.04));border-radius:8px;padding:10px;overflow:auto;max-height:260px;}
+      .tt-btn{height:28px;padding:0 12px;border-radius:7px;border:1px solid var(--dsw-alias-border-secondary,rgba(0,0,0,.12));
+        background:var(--dsw-alias-background-primary,#fff);font:inherit;font-size:12px;cursor:pointer;color:inherit;}
+      .tt-btn:hover{background:var(--dsw-alias-background-tertiary,rgba(0,0,0,.04));}
+      .tt-btn:active{transform:scale(.98);}
+      .tt-inline{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
+      .tt-note{font-size:11.5px;opacity:.55;line-height:1.65;}
+      @media (prefers-reduced-motion: reduce){.tt-root *{transition:none !important;scroll-behavior:auto !important;}}
+    `;
 
-    const styles = {
-      root: {
-        height: '100%',
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '18px',
-        padding: '28px 32px 24px',
-        color: 'var(--dsw-alias-text-primary, #e6e6e6)',
-        background: 'var(--dsw-alias-background-primary, #141414)',
-        overflow: 'hidden',
-        boxSizing: 'border-box',
-      },
-      header: { display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: '24px', flexWrap: 'wrap' },
-      titleBlock: { display: 'flex', flexDirection: 'column', gap: '6px' },
-      title: { margin: 0, fontSize: '22px', fontWeight: 600, letterSpacing: '-0.01em', lineHeight: 1.2 },
-      subtitle: { margin: 0, fontSize: '13px', lineHeight: 1.5, color: 'var(--dsw-alias-text-secondary, #9a9a9a)', maxWidth: '62ch' },
-      chips: { display: 'flex', gap: '8px', flexWrap: 'wrap' },
-      chip: {
-        display: 'inline-flex', alignItems: 'center', gap: '6px',
-        padding: '4px 10px', borderRadius: '999px',
-        border: '1px solid var(--dsw-alias-border-secondary, #333)',
-        background: 'var(--dsw-alias-background-secondary, #1b1b1b)',
-        fontSize: '12px', lineHeight: 1.4, color: 'var(--dsw-alias-text-secondary, #a8a8a8)',
-      },
-      chipStrong: { color: 'var(--dsw-alias-text-primary, #ededed)', fontWeight: 600 },
-      body: { display: 'flex', gap: '20px', minHeight: 0, flex: 1 },
-      list: { width: '296px', flexShrink: 0, display: 'flex', flexDirection: 'column', gap: '8px', overflowY: 'auto', paddingRight: '4px' },
-      card: {
-        display: 'flex', gap: '12px', alignItems: 'center', textAlign: 'left',
-        padding: '12px', borderRadius: '10px', cursor: 'pointer',
-        border: '1px solid var(--dsw-alias-border-secondary, #2c2c2c)',
-        background: 'var(--dsw-alias-background-secondary, #1a1a1a)',
-        color: 'inherit', font: 'inherit',
-        transition: 'transform 160ms cubic-bezier(0.23, 1, 0.32, 1), border-color 160ms ease, background 160ms ease',
-      },
-      cardActive: {
-        borderColor: 'var(--dsw-alias-border-accent, #6b8afd)',
-        background: 'var(--dsw-alias-background-elevated, #202020)',
-      },
-      avatar: {
-        width: '40px', height: '40px', flexShrink: 0, borderRadius: '999px',
-        display: 'grid', placeItems: 'center',
-        fontSize: '16px', fontWeight: 600,
-        color: 'var(--dsw-alias-text-primary, #f2f2f2)',
-        background: 'linear-gradient(160deg, rgba(107,138,253,0.35), rgba(107,138,253,0.08))',
-        border: '1px solid rgba(107,138,253,0.45)',
-      },
-      cardName: { fontSize: '13.5px', fontWeight: 600, lineHeight: 1.3, wordBreak: 'break-word' },
-      cardMeta: { fontSize: '11.5px', color: 'var(--dsw-alias-text-tertiary, #8a8a8a)', marginTop: '2px' },
-      detail: {
-        flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: '16px',
-        padding: '20px', borderRadius: '12px', overflow: 'hidden',
-        border: '1px solid var(--dsw-alias-border-secondary, #2c2c2c)',
-        background: 'var(--dsw-alias-background-secondary, #1a1a1a)',
-      },
-      detailHead: { display: 'flex', alignItems: 'center', gap: '14px' },
-      detailTitle: { margin: 0, fontSize: '17px', fontWeight: 600 },
-      tagRow: { display: 'flex', gap: '6px', flexWrap: 'wrap' },
-      tag: {
-        fontSize: '11px', padding: '2px 8px', borderRadius: '999px',
-        background: 'var(--dsw-alias-background-tertiary, #232323)',
-        border: '1px solid var(--dsw-alias-border-secondary, #303030)',
-        color: 'var(--dsw-alias-text-secondary, #a0a0a0)',
-      },
-      grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: '10px' },
-      stat: {
-        padding: '10px 12px', borderRadius: '8px',
-        border: '1px solid var(--dsw-alias-border-secondary, #2a2a2a)',
-        background: 'var(--dsw-alias-background-primary, #161616)',
-      },
-      statLabel: { fontSize: '11px', color: 'var(--dsw-alias-text-tertiary, #8a8a8a)', marginBottom: '4px' },
-      statValue: { fontSize: '15px', fontWeight: 600, fontVariantNumeric: 'tabular-nums' },
-      sectionTitle: { fontSize: '12px', fontWeight: 600, letterSpacing: '0.02em', color: 'var(--dsw-alias-text-secondary, #9a9a9a)' },
-      pre: {
-        margin: 0, padding: '12px 14px', borderRadius: '8px', overflow: 'auto', flex: 1, minHeight: '120px',
-        background: 'var(--dsw-alias-background-primary, #121212)',
-        border: '1px solid var(--dsw-alias-border-secondary, #262626)',
-        fontFamily: 'var(--dsw-font-family-mono, ui-monospace, SFMono-Regular, Consolas, monospace)',
-        fontSize: '11.5px', lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word',
-        color: 'var(--dsw-alias-text-secondary, #b4b4b4)',
-      },
-      actions: { display: 'flex', gap: '8px', alignItems: 'center' },
-      button: {
-        padding: '7px 14px', borderRadius: '8px', cursor: 'pointer', font: 'inherit', fontSize: '12.5px',
-        border: '1px solid var(--dsw-alias-border-secondary, #333)',
-        background: 'var(--dsw-alias-background-tertiary, #232323)',
-        color: 'var(--dsw-alias-text-primary, #e8e8e8)',
-        transition: 'transform 140ms cubic-bezier(0.23, 1, 0.32, 1), background 140ms ease',
-      },
-      hint: { fontSize: '12px', color: 'var(--dsw-alias-text-tertiary, #8a8a8a)', lineHeight: 1.6 },
-      guide: {
-        display: 'flex', gap: '16px', alignItems: 'flex-start', justifyContent: 'space-between',
-        padding: '14px 16px', borderRadius: '10px',
-        border: '1px solid var(--dsw-alias-border-secondary, #2c2c2c)',
-        background: 'var(--dsw-alias-background-secondary, #1a1a1a)',
-      },
-      guideText: { minWidth: 0 },
-      guideTitle: { fontSize: '12px', fontWeight: 600, letterSpacing: '0.02em', color: 'var(--dsw-alias-text-secondary, #9a9a9a)', marginBottom: '6px' },
-      guideList: { margin: 0, paddingLeft: '18px', fontSize: '12.5px', lineHeight: 1.7, color: 'var(--dsw-alias-text-secondary, #a8a8a8)' },
-      empty: { padding: '28px', textAlign: 'center', color: 'var(--dsw-alias-text-secondary, #9a9a9a)', fontSize: '13px' },
-    };
-
-    function Chip({ label, value, strong }) {
-      return h('span', { style: styles.chip },
-        h('span', null, label),
-        h('span', { style: strong ? styles.chipStrong : undefined }, String(value)),
-      );
+    // ───────────────────────────── 本地存储 ─────────────────────────────
+    function seedStore() {
+      const st = { cards: [], presets: [], activeCardId: null, activePresetId: null, extensions: {}, diag: [] };
+      const seeded = new Set();
+      (SNAPSHOT.cards || []).forEach((c) => {
+        st.cards.push({ id: c.id, name: c.name, creator: c.creator, spec: c.spec, counts: c.counts, worldName: c.worldName, source: 'seed' });
+        seeded.add(c.id);
+      });
+      (SNAPSHOT.presets || []).forEach((p) => {
+        st.presets.push({ id: p.id, name: p.name, counts: p, source: 'seed' });
+      });
+      st.activeCardId = st.cards[0]?.id ?? null;
+      st.activePresetId = st.presets[0]?.id ?? null;
+      return st;
     }
 
-    function Stat({ label, value }) {
-      return h('div', { style: styles.stat },
-        h('div', { style: styles.statLabel }, label),
-        h('div', { style: styles.statValue }, String(value)),
-      );
+    function loadStore() {
+      try {
+        const raw = localStorage.getItem(STORE_KEY);
+        if (!raw) return seedStore();
+        const parsed = JSON.parse(raw);
+        return { ...seedStore(), ...parsed };
+      } catch { return seedStore(); }
     }
 
-    function Panel() {
-      const cards = SNAPSHOT.cards || [];
-      const [activeId, setActiveId] = useState((SNAPSHOT.active && SNAPSHOT.active.cardId) || (cards[0] && cards[0].id));
-      const active = useMemo(() => cards.find((c) => c.id === activeId) || cards[0] || null, [activeId, cards]);
-      const [copied, setCopied] = useState(false);
+    function saveStore(next) {
+      try { localStorage.setItem(STORE_KEY, JSON.stringify(next)); } catch {}
+    }
 
-      const copySystem = useCallback(async () => {
+    // ───────────────────────────── 会话桥 ─────────────────────────────
+    function makeBridge(ctx, log) {
+      const remote = ctx.remote;
+      const session = remote && remote.session;
+      const ok = Boolean(session);
+
+      async function attempt(label, fns) {
+        let last;
+        for (const fn of fns) {
+          try { return await fn(); } catch (error) { last = error; }
+        }
+        log(`${label} 失败：${last && (last.code || last.message) || last}`);
+        throw last;
+      }
+
+      return {
+        ok,
+        async list() {
+          const r = await attempt('session.list', [
+            () => session.list(),
+            () => session.list({}),
+          ]);
+          if (Array.isArray(r)) return r;
+          return r?.sessions ?? r?.rows ?? r?.items ?? [];
+        },
+        async create(title, presetId) {
+          const payloads = [
+            { agentPreset: presetId, title },
+            { preset: presetId, title },
+            { title },
+          ];
+          return attempt('session.create', payloads.map((p) => () => session.create(p)));
+        },
+        async prompt(sessionId, text, attachments) {
+          const content = [{ type: 'text', text }];
+          const bodies = [
+            { sessionId, content },
+            { sessionId, content, mode: 'queue' },
+            { address: { sessionId }, content },
+          ];
+          return attempt('session.prompt', bodies.map((b) => () => session.prompt(b)));
+        },
+        async events(sessionId, throughSeq) {
+          const r = await attempt('session.events', [
+            () => session.events({ sessionId, throughSeq }),
+            () => session.events({ address: { sessionId }, throughSeq }),
+            () => session.events({ sessionId, address: { sessionId } }),
+          ]);
+          return r?.records ?? r?.events ?? r ?? [];
+        },
+        async models() {
+          try {
+            const r = await Promise.race([
+              session.listModels ? session.listModels() : Promise.reject(new Error('no listModels')),
+              new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 2500)),
+            ]);
+            return r?.models ?? r ?? [];
+          } catch { return []; }
+        },
+      };
+    }
+
+    // ───────────────────────────── Markdown ─────────────────────────────
+    function renderInline(text, keyBase) {
+      const nodes = [];
+      const re = /(`[^`]+`)|(\*\*[^*]+\*\*)|(\*[^*]+\*)/g;
+      let last = 0, m, i = 0;
+      while ((m = re.exec(text))) {
+        if (m.index > last) nodes.push(text.slice(last, m.index));
+        const token = m[0];
+        if (token.startsWith('`')) nodes.push(h('code', { key: keyBase + i++ }, token.slice(1, -1)));
+        else if (token.startsWith('**')) nodes.push(h('strong', { key: keyBase + i++ }, token.slice(2, -2)));
+        else nodes.push(h('em', { key: keyBase + i++ }, token.slice(1, -1)));
+        last = m.index + token.length;
+      }
+      if (last < text.length) nodes.push(text.slice(last));
+      return nodes;
+    }
+
+    function renderMarkdown(source, keyBase) {
+      if (!source) return null;
+      const blocks = String(source).split(/\n{2,}/);
+      return blocks.map((block, bi) => {
+        const key = `${keyBase}-${bi}`;
+        if (block.startsWith('```')) {
+          const body = block.replace(/^```[^\n]*\n?/, '').replace(/\n?```$/, '');
+          return h('pre', { key }, h('code', null, body));
+        }
+        if (/^>\s?/.test(block)) {
+          return h('blockquote', { key }, renderInline(block.replace(/^>\s?/gm, ''), key));
+        }
+        return h('p', { key }, renderInline(block, key));
+      });
+    }
+
+    // 显示作用域正则：把 ST 正则脚本应用到展示文本（markdownOnly 的那批）。
+    function applyDisplayRegex(text, rules) {
+      let out = String(text ?? '');
+      for (const rule of rules || []) {
+        if (!rule || rule.disabled || !rule.markdownOnly) continue;
         try {
-          await navigator.clipboard.writeText(SNAPSHOT.active ? SNAPSHOT.active.systemPreview : '');
-          setCopied(true);
-          setTimeout(() => setCopied(false), 1600);
-        } catch { /* 剪贴板不可用时忽略 */ }
+          const re = new RegExp(rule.findRegex.replace(/^\/(.*)\/([a-z]*)$/s, '$1'), rule.findRegex.match(/\/([a-z]*)$/)?.[1] || 'g');
+          out = out.replace(re, rule.replaceString ?? '');
+        } catch {}
+      }
+      return out;
+    }
+
+    // ───────────────────────────── 事件 → 楼层 ─────────────────────────────
+    function extractText(event) {
+      const data = event?.data ?? event;
+      const content = data?.content ?? data?.message?.content ?? data?.text;
+      if (typeof content === 'string') return content;
+      if (Array.isArray(content)) {
+        return content.map((block) => (typeof block === 'string' ? block : block?.text ?? '')).filter(Boolean).join('');
+      }
+      return '';
+    }
+
+    function toFloors(records) {
+      const out = [];
+      for (const record of records || []) {
+        const event = record?.type === 'event' ? record.event : record;
+        if (!event) continue;
+        const type = event.type;
+        if (type === 'user/message' || type === 'assistant/message') {
+          const text = extractText(event);
+          if (!text) continue;
+          out.push({
+            id: `${event.seq ?? out.length}-${type}`,
+            role: type === 'user/message' ? 'user' : 'assistant',
+            text,
+            seq: event.seq ?? 0,
+            time: event.time ?? event.data?.time ?? null,
+          });
+        }
+      }
+      return out;
+    }
+
+    // ───────────────────────────── 主面板 ─────────────────────────────
+    function Panel(props) {
+      const ctxRef = useRef(props && props.__ctx ? props.__ctx : null);
+      const [store, setStore] = useState(loadStore);
+      const [view, setView] = useState('chat');
+      const [sessions, setSessions] = useState([]);
+      const [activeId, setActiveId] = useState(null);
+      const [floors, setFloors] = useState([]);
+      const [draft, setDraft] = useState('');
+      const [busy, setBusy] = useState(false);
+      const [diag, setDiag] = useState([]);
+      const [models, setModels] = useState([]);
+      const chatRef = useRef(null);
+      const scrollRef = useRef(null);
+
+      const patchStore = useCallback((patch) => {
+        setStore((prev) => {
+          const next = { ...prev, ...patch };
+          saveStore(next);
+          return next;
+        });
       }, []);
 
-      const counts = SNAPSHOT.counts || { cards: 0, presets: 0, lorebooks: 0, errors: 0 };
-      const wi = SNAPSHOT.active ? SNAPSHOT.active.worldInfo : null;
+      const log = useCallback((line) => {
+        setDiag((prev) => [...prev.slice(-39), `${new Date().toLocaleTimeString()}  ${line}`]);
+      }, []);
 
-      return h('div', { style: styles.root },
-        h('style', null,
-          '.dsh-tt-btn:focus-visible{outline:2px solid var(--dsw-alias-border-accent,#6b8afd);outline-offset:2px}' +
-          '@media (prefers-reduced-motion: reduce){.dsh-tt-btn{transition:none !important}}',
-        ),
-        h('header', { style: styles.header },
-          h('div', { style: styles.titleBlock },
-            h('h1', { style: styles.title }, '角色扮演'),
-            h('p', { style: styles.subtitle },
-              '用 SillyTavern 的角色卡、预设与世界书开一场戏。这里显示的是本机已解析的资产；真正的对话在会话界面里进行。'),
-          ),
-          h('div', { style: styles.chips },
-            h(Chip, { label: '角色', value: counts.cards, strong: true }),
-            h(Chip, { label: '预设', value: counts.presets, strong: true }),
-            h(Chip, { label: '世界书', value: counts.lorebooks }),
-            counts.errors > 0 ? h(Chip, { label: '解析失败', value: counts.errors }) : null,
-          ),
-        ),
-        h('section', { style: styles.guide },
-          h('div', { style: styles.guideText },
-            h('div', { style: styles.guideTitle }, '怎么开始'),
-            h('ol', { style: styles.guideList },
-              h('li', null, '新建会话时，预设选「角色扮演」——它不带任何工具，只聊天。'),
-              h('li', null, '随便说一句开场。角色卡、预设与世界书会自动组装进系统提示词。'),
-              h('li', null, '想换角色就回这张工作台点一张卡；想换预设就再建一个会话。'),
+      const bridge = useMemo(() => (ctxRef.current ? makeBridge(ctxRef.current, log) : null), [log]);
+
+      const activeCard = store.cards.find((c) => c.id === store.activeCardId) || null;
+      const activePreset = store.presets.find((p) => p.id === store.activePresetId) || null;
+
+      // 会话列表
+      const refreshSessions = useCallback(async () => {
+        if (!bridge?.ok) { log('ctx.remote.session 不可用，会话功能停用'); return; }
+        try {
+          const rows = await bridge.list();
+          const normalized = rows.map((row) => ({
+            id: row.sessionId ?? row.id ?? row.address?.sessionId,
+            title: row.title ?? row.name ?? '',
+            updatedAt: row.updatedAt ?? row.lastActivity ?? row.time ?? null,
+            raw: row,
+          })).filter((r) => r.id);
+          normalized.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
+          setSessions(normalized);
+          setActiveId((current) => current ?? normalized[0]?.id ?? null);
+        } catch (error) {
+          log(`会话列表读取失败：${error?.code || error?.message || error}`);
+        }
+      }, [bridge, log]);
+
+      useEffect(() => { refreshSessions(); }, [refreshSessions]);
+
+      useEffect(() => {
+        if (!bridge) return;
+        bridge.models().then((list) => setModels(Array.isArray(list) ? list.slice(0, 40) : []));
+      }, [bridge]);
+
+      // 拉取当前会话事件（轮询；follow 未接通前的兜底）
+      useEffect(() => {
+        if (!activeId || !bridge?.ok) return;
+        let cancelled = false;
+        let timer = null;
+        const tick = async () => {
+          try {
+            const records = await bridge.events(activeId);
+            if (cancelled) return;
+            setFloors(toFloors(records));
+          } catch {}
+          if (!cancelled) timer = setTimeout(tick, 1200);
+        };
+        tick();
+        return () => { cancelled = true; if (timer) clearTimeout(timer); };
+      }, [activeId, bridge]);
+
+      useEffect(() => {
+        const el = scrollRef.current;
+        if (el) el.scrollTop = el.scrollHeight;
+      }, [floors.length]);
+
+      const newChat = useCallback(async () => {
+        if (!bridge?.ok) { log('无法新建：会话通道不可用'); return; }
+        const stamp = new Date().toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+        const title = `${RP_PREFIX}${activeCard?.name ?? '角色扮演'} · ${stamp}`;
+        setBusy(true);
+        try {
+          const created = typeof bridge.create === 'function' ? await bridge.create(title, 'roleplay') : null;
+          const id = created?.sessionId ?? created?.id ?? created?.address?.sessionId ?? null;
+          if (id) { setActiveId(id); setView('chat'); }
+          await refreshSessions();
+          log(`已新建会话 ${id || '(未知 id)'}`);
+        } catch (error) {
+          log(`新建失败：${error?.code || error?.message || error}`);
+        } finally { setBusy(false); }
+      }, [bridge, activeCard, refreshSessions, log]);
+
+      const send = useCallback(async () => {
+        const text = draft.trim();
+        if (!text || !activeId || busy) return;
+        setBusy(true);
+        setDraft('');
+        setFloors((prev) => [...prev, { id: `local-${Date.now()}`, role: 'user', text, seq: -1, time: Date.now() }]);
+        try {
+          await bridge.prompt(activeId, text, []);
+        } catch (error) {
+          log(`发送失败：${error?.code || error?.message || error}`);
+        } finally { setBusy(false); }
+      }, [draft, activeId, busy, bridge, log]);
+
+      const importFiles = useCallback(async (event) => {
+        const files = Array.from(event.target.files || []);
+        event.target.value = '';
+        for (const file of files) {
+          try {
+            const text = await file.text();
+            const json = JSON.parse(text);
+            if (Array.isArray(json.prompts) || Array.isArray(json.prompt_order)) {
+              const id = `preset-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+              patchStore({ presets: [...store.presets, { id, name: json.name || file.name, counts: { prompts: json.prompts?.length ?? 0 }, source: 'import', raw: json }] });
+              log(`已导入预设 ${json.name || file.name}`);
+            } else {
+              const inner = json.data ?? json;
+              const id = `card-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+              const card = {
+                id,
+                name: inner.name || file.name,
+                creator: inner.creator || '',
+                spec: json.spec || 'chara_card_v2',
+                counts: { lorebookEntries: inner.character_book?.entries?.length ?? 0 },
+                worldName: inner.character_book?.name ?? '',
+                source: 'import',
+                raw: json,
+              };
+              patchStore({ cards: [...store.cards, card], activeCardId: card.id });
+              log(`已导入角色卡 ${card.name}`);
+            }
+          } catch (error) {
+            log(`导入失败 ${file.name}：${error?.message || error}`);
+          }
+        }
+      }, [store, patchStore, log]);
+
+      const exportActive = useCallback(() => {
+        const payload = activePreset ? (activePreset.raw ?? activePreset) : rawOf(activeCard);
+        if (!payload) return;
+        const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${(activePreset || activeCard).name || 'export'}.json`;
+        a.click();
+        URL.revokeObjectURL(url);
+      }, [activePreset, activeCard]);
+
+      const rawOf = useCallback((item) => {
+        if (!item) return null;
+        if (item.raw) return item.raw;
+        const seed = (SNAPSHOT.cards || []).find((c) => c.id === item.id);
+        return seed?.rawLite ?? null;
+      }, []);
+
+      const displayRules = useMemo(() => {
+        const card = rawOf(activeCard);
+        const inner = card?.data ?? card;
+        return inner?.extensions?.regex_scripts ?? [];
+      }, [activeCard, rawOf]);
+
+      const renderFloors = () =>
+        floors.map((floor) => {
+          if (floor.role === 'system') return null;
+          const text = applyDisplayRegex(floor.text, displayRules);
+          return h('div', { key: floor.id, className: 'tt-fl' },
+            h('div', { className: 'tt-av' },
+              floor.role === 'user' ? '你' : String(activeCard?.name ?? 'AI').slice(0, 1)),
+            h('div', { style: { minWidth: 0, flex: 1 } },
+              h('div', { className: 'tt-meta' },
+                `${floor.role === 'user' ? '你' : (activeCard?.name ?? '角色')}${floor.time ? ' · ' + new Date(floor.time).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) : ''}`),
+              h('div', { className: 'tt-bub' }, renderMarkdown(text, floor.id)),
             ),
-          ),
-          h('button', {
-            type: 'button', className: 'dsh-tt-btn', style: styles.button,
-            onClick: () => goConversation(),
-            onMouseDown: (e) => { e.currentTarget.style.transform = 'scale(0.97)'; },
-            onMouseUp: (e) => { e.currentTarget.style.transform = ''; },
-            onMouseLeave: (e) => { e.currentTarget.style.transform = ''; },
-          }, '去会话界面'),
+          );
+        });
+
+      const sidebar = h('div', { className: 'tt-side' },
+        h('button', { className: 'tt-new', onClick: newChat, disabled: busy }, '+ 新建对话'),
+        h('div', { className: 'tt-list' },
+          sessions.length === 0
+            ? h('div', { className: 'tt-empty', style: { height: 'auto', padding: '24px 12px' } }, '还没有对话')
+            : sessions.slice(0, 200).map((s) => h('button', {
+              key: s.id,
+              className: 'tt-row' + (s.id === activeId ? ' on' : ''),
+              onClick: () => { setActiveId(s.id); setView('chat'); },
+            },
+              h('b', null, s.title || `${RP_PREFIX}未命名`),
+              h('span', null, s.updatedAt ? new Date(s.updatedAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : ''),
+            )),
         ),
-        h('div', { style: styles.body },
-          h('div', { style: styles.list },
-            cards.length === 0
-              ? h('div', { style: styles.empty }, '还没有角色卡。把 PNG 卡放进 assets/characters 或 参考/ 目录后重新构建。')
-              : cards.map((card) => h('button', {
-                key: card.id,
-                type: 'button',
-                className: 'dsh-tt-btn',
-                onClick: () => setActiveId(card.id),
-                style: card.id === (active && active.id) ? { ...styles.card, ...styles.cardActive } : styles.card,
-                onMouseDown: (e) => { e.currentTarget.style.transform = 'scale(0.985)'; },
-                onMouseUp: (e) => { e.currentTarget.style.transform = ''; },
-                onMouseLeave: (e) => { e.currentTarget.style.transform = ''; },
-              },
-                h('div', { style: styles.avatar }, String(card.name || '?').slice(0, 1)),
-                h('div', { style: { minWidth: 0 } },
-                  h('div', { style: styles.cardName }, card.name),
-                  h('div', { style: styles.cardMeta }, `${card.spec} · ${card.counts.lorebookEntries} 条世界书`),
-                ),
-              )),
+        h('div', { className: 'tt-tabs' },
+          [['chat', '对话'], ['cards', '角色'], ['presets', '预设'], ['extensions', '扩展'], ['settings', '设置']].map(([key, label]) =>
+            h('button', {
+              key, className: 'tt-tab' + (view === key ? ' on' : ''),
+              onClick: () => setView(key),
+            }, label)),
+        ),
+      );
+
+      const chatPane = view === 'chat'
+        ? h('div', { style: { flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 } },
+          h('div', { className: 'tt-chat', ref: scrollRef },
+            floors.length === 0
+              ? h('div', { className: 'tt-empty' },
+                h('div', null, activeCard ? `正在与「${activeCard.name}」对话` : '先在「角色」里选一张卡'),
+                h('div', { className: 'tt-note' }, '把开场白或任何剧情推进写进下面的输入框。'))
+              : renderFloors()),
+          h('div', { className: 'tt-comp' },
+            h('div', { className: 'tt-box' },
+              h('textarea', {
+                className: 'tt-ta',
+                ref: chatRef,
+                value: draft,
+                placeholder: '写点什么…（Enter 发送，Shift+Enter 换行）',
+                onChange: (e) => setDraft(e.target.value),
+                onKeyDown: (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } },
+              }),
+              h('div', { className: 'tt-bar' },
+                h('button', { className: 'tt-ic', title: '附件（占位）', onClick: () => log('附件上传待接通') }, '📎'),
+                h('button', { className: 'tt-ic', title: '语音输入（占位）', onClick: () => log('语音输入待接通') }, '🎙'),
+                h('div', { className: 'tt-spacer' }),
+                h('button', { className: 'tt-send', disabled: busy || !draft.trim() || !activeId, onClick: send }, busy ? '生成中…' : '发送'),
+              ),
+            ),
+          ))
+        : null;
+
+      const cardsPane = h('div', { className: 'tt-pane' },
+        h('h2', { className: 'tt-h' }, '角色卡'),
+        h('p', { className: 'tt-sub' }, '点击切换当前角色。导入支持 Character Card V2/V3 的 JSON。'),
+        h('div', { className: 'tt-inline', style: { marginBottom: '14px' } },
+          h('label', { className: 'tt-btn' }, '导入角色卡',
+            h('input', { type: 'file', accept: '.json', multiple: true, style: { display: 'none' }, onChange: importFiles })),
+          h('button', { className: 'tt-btn', onClick: exportActive }, '导出当前'),
+        ),
+        h('div', { className: 'tt-grid' },
+          store.cards.map((card) => h('div', {
+            key: card.id,
+            className: 'tt-card' + (card.id === store.activeCardId ? ' on' : ''),
+            onClick: () => patchStore({ activeCardId: card.id }),
+          },
+            h('b', null, card.name),
+            h('small', null, `${card.spec || ''} · 世界书 ${card.counts?.lorebookEntries ?? 0} 条`),
+            h('small', null, card.creator || '—'),
+          ))),
+      );
+
+      const presetsPane = h('div', { className: 'tt-pane' },
+        h('h2', { className: 'tt-h' }, '预设'),
+        h('p', { className: 'tt-sub' }, '导入 ST 预设 JSON（保留全部字段，不丢扩展配置）。'),
+        h('div', { className: 'tt-inline', style: { marginBottom: '14px' } },
+          h('label', { className: 'tt-btn' }, '导入预设',
+            h('input', { type: 'file', accept: '.json', multiple: true, style: { display: 'none' }, onChange: importFiles })),
+          h('button', { className: 'tt-btn', onClick: exportActive }, '导出当前'),
+        ),
+        h('div', { className: 'tt-grid' },
+          store.presets.map((preset) => h('div', {
+            key: preset.id,
+            className: 'tt-card' + (preset.id === store.activePresetId ? ' on' : ''),
+            onClick: () => patchStore({ activePresetId: preset.id }),
+          },
+            h('b', null, preset.name),
+            h('small', null, `prompts ${preset.counts?.prompts ?? preset.counts?.counts?.prompts ?? 0}`),
+          ))),
+      );
+
+      const extPane = h('div', { className: 'tt-pane' },
+        h('h2', { className: 'tt-h' }, '扩展'),
+        h('p', { className: 'tt-sub' }, '酒馆助手（JS-Slash-Runner）以扩展形式安装，可更新、可卸载。'),
+        h('div', { className: 'tt-inline', style: { marginBottom: '12px' } },
+          h('button', { className: 'tt-btn', onClick: () => log('扩展下载器待接通（GitHub tree → 本地缓存）') }, '安装最新版'),
+          h('button', { className: 'tt-btn', onClick: () => log('扩展运行器待接通') }, '启动'),
+        ),
+        Object.keys(store.extensions || {}).length === 0
+          ? h('div', { className: 'tt-note' }, '尚未安装扩展。')
+          : h('div', { className: 'tt-diag' }, JSON.stringify(store.extensions, null, 2)),
+      );
+
+      const settingsPane = h('div', { className: 'tt-pane' },
+        h('h2', { className: 'tt-h' }, '设置与诊断'),
+        h('p', { className: 'tt-sub' }, '会话通道的连接状态与最近错误都显示在这里。'),
+        h('div', { className: 'tt-inline', style: { marginBottom: '10px' } },
+          h('button', { className: 'tt-btn', onClick: refreshSessions }, '重新读取会话'),
+          h('button', { className: 'tt-btn', onClick: () => setDiag([]) }, '清空诊断'),
+        ),
+        h('div', { className: 'tt-note', style: { marginBottom: '8px' } },
+          `session remote: ${bridge?.ok ? '可用' : '不可用'} · 会话数 ${sessions.length} · 模型 ${models.length}`),
+        h('div', { className: 'tt-diag' }, diag.length ? diag.join('\n') : '（暂无诊断信息）'),
+      );
+
+      const pane = view === 'cards' ? cardsPane : view === 'presets' ? presetsPane : view === 'extensions' ? extPane : view === 'settings' ? settingsPane : chatPane;
+
+      return h('div', { className: 'tt-root' },
+        h('style', null, CSS),
+        h('div', { className: 'tt-top' },
+          h('div', { className: 'tt-brand' }, '角色扮演'),
+          h('div', { className: 'tt-spacer' }),
+          h('div', { className: 'tt-chip', title: '当前角色' },
+            h('span', null, '🎭'),
+            h('select', {
+              value: store.activeCardId || '',
+              onChange: (e) => patchStore({ activeCardId: e.target.value }),
+            }, store.cards.map((c) => h('option', { key: c.id, value: c.id }, c.name))),
           ),
-          h('section', { style: styles.detail },
-            active
-              ? [
-                h('div', { style: styles.detailHead, key: 'head' },
-                  h('div', { style: styles.avatar }, String(active.name || '?').slice(0, 1)),
-                  h('div', { style: { minWidth: 0 } },
-                    h('h2', { style: styles.detailTitle }, active.name),
-                    h('div', { style: styles.cardMeta }, [active.creator, active.version].filter(Boolean).join(' · ') || active.spec),
-                  ),
-                ),
-                active.tags && active.tags.length
-                  ? h('div', { style: styles.tagRow, key: 'tags' }, active.tags.map((tag) => h('span', { key: tag, style: styles.tag }, tag)))
-                  : null,
-                h('div', { style: styles.grid, key: 'stats' },
-                  h(Stat, { label: '世界书条目', value: active.counts.lorebookEntries }),
-                  h(Stat, { label: '世界书字数', value: active.counts.lorebookChars.toLocaleString() }),
-                  h(Stat, { label: '酒馆助手脚本', value: `${active.counts.thScriptsEnabled}/${active.counts.thScripts}` }),
-                  h(Stat, { label: '正则脚本', value: active.counts.regexScripts }),
-                  h(Stat, { label: '备选问候', value: active.counts.greetings }),
-                  h(Stat, { label: '首条消息', value: `${active.counts.firstMes} 字` }),
-                ),
-                wi ? h('div', { key: 'wi' },
-                  h('div', { style: { ...styles.sectionTitle, marginBottom: '8px' } },
-                    `世界书激活 ${wi.activated}/${wi.total} 条 · ${wi.tokens}/${wi.budget} tokens · 常量 ${wi.constants}`),
-                  wi.skipped && wi.skipped.length
-                    ? h('div', { style: styles.hint },
-                      '被预算挤掉的条目：' + wi.skipped.slice(0, 6).map((s) => (s.comment || `#${s.uid}`)).join('、'))
-                    : null,
-                ) : null,
-                h('div', { key: 'pre-wrap', style: { display: 'flex', flexDirection: 'column', gap: '8px', minHeight: 0, flex: 1 } },
-                  h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
-                    h('div', { style: styles.sectionTitle }, `系统提示词预览 · ${SNAPSHOT.active ? SNAPSHOT.active.systemLength.toLocaleString() : 0} 字`),
-                    h('div', { style: styles.actions },
-                      h('button', {
-                        type: 'button', className: 'dsh-tt-btn', style: styles.button, onClick: copySystem,
-                        onMouseDown: (e) => { e.currentTarget.style.transform = 'scale(0.97)'; },
-                        onMouseUp: (e) => { e.currentTarget.style.transform = ''; },
-                        onMouseLeave: (e) => { e.currentTarget.style.transform = ''; },
-                      }, copied ? '已复制' : '复制预览'),
-                    ),
-                  ),
-                  h('pre', { style: styles.pre }, SNAPSHOT.active ? SNAPSHOT.active.systemPreview : '（没有可预览的系统提示词）'),
-                ),
-              ]
-              : h('div', { style: styles.empty }, '选择左侧的角色卡查看详情。'),
+          h('div', { className: 'tt-chip', title: '当前预设' },
+            h('span', null, '📋'),
+            h('select', {
+              value: store.activePresetId || '',
+              onChange: (e) => patchStore({ activePresetId: e.target.value }),
+            }, store.presets.map((p) => h('option', { key: p.id, value: p.id }, p.name))),
+          ),
+          h('div', { className: 'tt-chip', title: '模型' },
+            h('span', null, '⚙️'),
+            h('select', {
+              defaultValue: '',
+              onChange: (e) => log(`模型切换请求：${e.target.value}（待接通 selectModel）`),
+            },
+            h('option', { value: '' }, models.length ? '跟随会话' : '默认模型'),
+            models.map((m) => {
+              const value = typeof m === 'string' ? m : (m.id ?? m.model ?? `${m.provider}/${m.model}`);
+              const label = typeof m === 'string' ? m : (m.label ?? m.name ?? value);
+              return h('option', { key: String(value), value: String(value) }, String(label));
+            })),
           ),
         ),
-        h('div', { style: styles.hint },
-          '下一步：新建会话时选择「角色扮演」预设。该预设不含任何工具，系统提示词由本插件接管。'),
+        h('div', { className: 'tt-body' }, sidebar, h('div', { className: 'tt-main' }, pane)),
       );
     }
 
@@ -401,15 +1005,11 @@ window.__ModuleLoader__.load({
       inject: ['slots'],
       apply(ctx) {
         try {
-          ctx.slots.inject('main', () => ctx.slots.register({ name: 'main', key: 'roleplay' }, Panel));
+          ctx.slots.inject('main', () => ctx.slots.register({ name: 'main', key: 'roleplay' }, () => h(Panel, { __ctx: ctx })));
           ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
             name: 'sidebar.panellist', id: 'roleplay', order: 20, label: () => '角色扮演',
           }, PanelIcon));
-          goConversation = () => {
-            try { ctx.layout.selectPanel(null); }
-            catch (error) { console.error('[dsh-tt] selectPanel(null) failed', error); }
-          };
-          console.info('[dsh-tt] client module loaded: sidebar + main panel registered');
+          console.info('[dsh-tt] client module loaded');
         } catch (error) {
           console.error('[dsh-tt] client activation failed', error);
           throw error;

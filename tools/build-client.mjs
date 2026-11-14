@@ -20,6 +20,12 @@ if (snapshot.active) {
 }
 
 const literal = JSON.stringify(snapshot, null, 2);
-const out = template.replace('__SNAPSHOT__', literal);
+// 用函数形式替换：字符串替换会把 JSON 里的 `$` 当成模式序列，导致产物损坏。
+const marker = 'const SNAPSHOT = __SNAPSHOT__;';
+if (!template.includes(marker)) {
+  console.error('模板里找不到快照占位语句：' + marker);
+  process.exit(1);
+}
+const out = template.replace(marker, () => `const SNAPSHOT = ${literal};`);
 fs.writeFileSync(path.join(root, 'plugin/client.js'), out, 'utf8');
 console.log(`client.js 已生成（${(out.length / 1024).toFixed(1)} KB，快照 ${(literal.length / 1024).toFixed(1)} KB）`);
