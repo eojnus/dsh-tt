@@ -107,6 +107,7 @@ export function substitute(text, env = {}, options = {}) {
 export function createMacroEnv({ card, userName, userDescription, lastMessage, lastMessageId, maxPrompt, maxContext, maxResponse, input }) {
   return {
     char: card?.name ?? '',
+    charIfNotGroup: card?.name ?? '',
     user: userName || '你',
     group: '',
     description: card?.description ?? '',

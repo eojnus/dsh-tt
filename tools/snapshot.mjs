@@ -1,4 +1,5 @@
-// 构建期快照：把资产库解析成面板可用的 JSON。
+// 构建期快照：把资产库解析成面板可用的元数据。
+// v3：不再把卡/预设正文塞进客户端包——客户端通过 workspaceFiles 远程读取原件。
 // 用法：node tools/snapshot.mjs [资产根目录]
 import fs from 'node:fs';
 import path from 'node:path';
@@ -13,6 +14,8 @@ const { loadLibrary, bookEntriesOf, resolveActive } = await load('plugin/lib/lib
 const { activateEntries } = await load('plugin/lib/lorebook.js');
 const { renderPrompt } = await load('plugin/lib/prompt.js');
 const { createMacroEnv } = await load('plugin/lib/macros.js');
+const { createEjsScope } = await load('plugin/lib/ejs.js');
+const { applyWorldInfoDecorators } = await load('plugin/lib/decorators.js');
 
 const roots = [path.join(assetRoot, '参考'), path.join(assetRoot, 'assets')];
 const library = loadLibrary(roots);
@@ -25,10 +28,22 @@ if (active) {
   const scanText = [card.description, card.firstMes, ...(card.alternateGreetings ?? []).slice(0, 3), card.scenario]
     .filter(Boolean).join('\n');
   const entries = bookEntriesOf(card);
-  const lorebook = activateEntries({ entries, scanText, budget: Number(process.env.DSH_TT_WI_BUDGET) || 32000 });
-  const preset = library.presets[0]?.preset ?? null;
   const env = createMacroEnv({ card, userName: '你', maxPrompt: 128000, maxContext: 200000 });
-  const rendered = renderPrompt({ card, preset, lorebook, env });
+  const lorebookByName = new Map();
+  const ejsScope = createEjsScope({}, {
+    getwi: (name) => lorebookByName.get(name) ?? '',
+    getchar: () => card.name,
+    resolve: (key) => (env && key in env ? env[key] : undefined),
+  });
+  const lorebook = activateEntries({
+    entries,
+    scanText,
+    budget: Number(process.env.DSH_TT_WI_BUDGET) || 32000,
+    decorateEntry: (entry) => applyWorldInfoDecorators(entry.content, ejsScope),
+  });
+  for (const entry of lorebook.activated) lorebookByName.set(entry.comment, entry.content);
+  const preset = library.presets[0]?.preset ?? null;
+  const rendered = renderPrompt({ card, preset, lorebook, env, ejsScope });
   const systemText = [rendered.system, rendered.tail].filter(Boolean).join('\n\n');
 
   activeSnapshot = {
@@ -42,8 +57,8 @@ if (active) {
       activated: lorebook.stats.activated,
       tokens: lorebook.stats.tokens,
       budget: lorebook.stats.budget,
-      constants: lorebook.activated.filter((e) => e.constant).length,
-      matched: lorebook.activated.filter((e) => !e.constant).map((e) => e.comment).filter(Boolean).slice(0, 12),
+      constants: lorebook.activated.filter((entry) => entry.constant).length,
+      matched: lorebook.activated.filter((entry) => !entry.constant).map((entry) => entry.comment).filter(Boolean).slice(0, 12),
       skipped: lorebook.skipped.slice(0, 12),
     },
   };
@@ -51,6 +66,7 @@ if (active) {
 
 const snapshot = {
   generatedAt: new Date().toISOString(),
+  version: 3,
   roots,
   counts: {
     cards: library.cards.length,
@@ -58,24 +74,28 @@ const snapshot = {
     lorebooks: library.lorebooks.length,
     errors: library.errors.length,
   },
-  cards: library.cards.map((c) => ({
-    id: c.id,
-    file: path.basename(c.file),
-    ...c.summary,
-    // 面板需要的少量原始字段（不含几 MB 的脚本正文）
-    rawLite: {
-      name: c.card.name,
-      description: c.card.description,
-      firstMes: c.card.firstMes,
-      systemPrompt: c.card.systemPrompt,
-      postHistoryInstructions: c.card.postHistoryInstructions,
-      alternateGreetings: c.card.alternateGreetings.slice(0, 3),
-      depthPrompt: c.card.depthPrompt,
-      extensions: { regex_scripts: c.card.regexScripts },
-    },
+  cards: library.cards.map((entry) => ({
+    id: entry.id,
+    file: path.basename(entry.file),
+    filePath: entry.file,
+    ...entry.summary,
+    // 面板只用这些元数据；正文由客户端按需从磁盘读。
+    hasFilePath: true,
   })),
-  presets: library.presets.map((p) => ({ id: p.id, file: path.basename(p.file), name: p.name, ...p.summary })),
-  lorebooks: library.lorebooks.map((l) => ({ id: l.id, file: path.basename(l.file), name: l.name, ...l.summary })),
+  presets: library.presets.map((entry) => ({
+    id: entry.id,
+    file: path.basename(entry.file),
+    filePath: entry.file,
+    name: entry.name,
+    counts: entry.summary,
+  })),
+  lorebooks: library.lorebooks.map((entry) => ({
+    id: entry.id,
+    file: path.basename(entry.file),
+    filePath: entry.file,
+    name: entry.name,
+    counts: entry.summary,
+  })),
   errors: library.errors,
   active: activeSnapshot,
 };

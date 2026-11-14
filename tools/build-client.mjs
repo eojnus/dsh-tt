@@ -1,4 +1,4 @@
-// 把构建期快照注入客户端模板，产出 plugin/client.js。
+// 把构建期快照、TH 核心与 iframe shim 注入客户端模板，产出 plugin/client.js。
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -12,20 +12,39 @@ if (!fs.existsSync(snapshotPath)) {
   process.exit(1);
 }
 const snapshot = JSON.parse(fs.readFileSync(snapshotPath, 'utf8'));
+const coreSource = fs.readFileSync(path.join(root, 'src/tavern/core.js'), 'utf8');
+const shimSource = fs.readFileSync(path.join(root, 'src/tavern/shim.js'), 'utf8');
 
-// 面板只展示摘要：预览裁到 1200 字，避免把整份系统提示词塞进客户端包。
-if (snapshot.active) {
-  snapshot.active.systemPreview = snapshot.active.systemPreview.slice(0, 1200);
-  snapshot.active.truncated = snapshot.active.systemLength > 1200;
+// 客户端只需要元数据：卡/预设/世界书正文由 workspaceFiles 在运行时按需读取。
+// 系统提示词预览留在 build/snapshot.json（已排除出版本库），不注入客户端包。
+const clientSnapshot = {
+  version: snapshot.version,
+  generatedAt: snapshot.generatedAt,
+  roots: snapshot.roots,
+  counts: snapshot.counts,
+  cards: snapshot.cards,
+  presets: snapshot.presets,
+  lorebooks: snapshot.lorebooks,
+  errors: snapshot.errors,
+};
+
+function replaceOnce(source, marker, literal, label) {
+  if (!source.includes(marker)) {
+    console.error(`模板里找不到${label}占位语句：${marker}`);
+    process.exit(1);
+  }
+  return source.replace(marker, () => literal);
 }
 
-const literal = JSON.stringify(snapshot, null, 2);
-// 用函数形式替换：字符串替换会把 JSON 里的 `$` 当成模式序列，导致产物损坏。
-const marker = 'const SNAPSHOT = __SNAPSHOT__;';
-if (!template.includes(marker)) {
-  console.error('模板里找不到快照占位语句：' + marker);
-  process.exit(1);
-}
-const out = template.replace(marker, () => `const SNAPSHOT = ${literal};`);
+let out = template;
+out = replaceOnce(out, 'const SNAPSHOT = __SNAPSHOT__;', `const SNAPSHOT = ${JSON.stringify(clientSnapshot)};`, '快照');
+out = replaceOnce(out, 'const TAVERN_CORE_SRC = __TAVERN_CORE__;', `const TAVERN_CORE_SRC = ${JSON.stringify(coreSource)};`, 'TH 核心');
+out = replaceOnce(out, 'const TAVERN_SHIM_SRC = __TAVERN_SHIM__;', `const TAVERN_SHIM_SRC = ${JSON.stringify(shimSource)};`, 'TH shim');
+
 fs.writeFileSync(path.join(root, 'plugin/client.js'), out, 'utf8');
-console.log(`client.js 已生成（${(out.length / 1024).toFixed(1)} KB，快照 ${(literal.length / 1024).toFixed(1)} KB）`);
+console.log(
+  `client.js 已生成（${(out.length / 1024).toFixed(1)} KB：` +
+  `快照 ${(JSON.stringify(clientSnapshot).length / 1024).toFixed(1)} KB、` +
+  `核心 ${(coreSource.length / 1024).toFixed(1)} KB、` +
+  `shim ${(shimSource.length / 1024).toFixed(1)} KB）`,
+);

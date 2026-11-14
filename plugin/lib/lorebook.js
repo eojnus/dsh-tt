@@ -91,8 +91,12 @@ function passesSecondary(text, entry, options) {
  * @param {number} [input.budget] token 预算
  * @param {(t:string)=>number} [input.estimate] token 估算器
  * @param {() => number} [input.random] 随机源（便于测试固定）
+ * @param {(entry:object)=>boolean} [input.isActive] 额外激活判定（如世界书 @@if 装饰器）
+ * @param {(entry:object)=>string} [input.decorateEntry] 返回条目最终正文（处理 @@if 等装饰器后）；空串视为不激活
  */
-export function activateEntries({ entries, scanText, budget = 2048, estimate = estimateTokens, random = Math.random }) {
+export function activateEntries({
+  entries, scanText, budget = 2048, estimate = estimateTokens, random = Math.random, isActive, decorateEntry,
+}) {
   const options = { useRegex: false, caseSensitive: false, matchWholeWords: false };
   const list = (entries || [])
     .filter((e) => e && e.enabled !== false && e.disable !== true)
@@ -105,8 +109,8 @@ export function activateEntries({ entries, scanText, budget = 2048, estimate = e
   let overflowed = false;
 
   for (const entry of list) {
-    const content = typeof entry.content === 'string' ? entry.content : '';
-    if (!content) continue;
+    const rawContent = typeof entry.content === 'string' ? entry.content : '';
+    if (!rawContent) continue;
 
     const isConstant = entry.constant === true;
     let matchedKey = null;
@@ -134,6 +138,17 @@ export function activateEntries({ entries, scanText, budget = 2048, estimate = e
         skipped.push({ uid: entry.uid, comment: entry.comment, why: 'probability' });
         continue;
       }
+    }
+
+    if (typeof isActive === 'function' && !isActive(entry)) {
+      skipped.push({ uid: entry.uid, comment: entry.comment, why: 'decorator' });
+      continue;
+    }
+
+    const content = typeof decorateEntry === 'function' ? String(decorateEntry(entry) ?? '') : rawContent;
+    if (!content) {
+      skipped.push({ uid: entry.uid, comment: entry.comment, why: 'decorator' });
+      continue;
     }
 
     if (overflowed && entry.ignoreBudget !== true) {

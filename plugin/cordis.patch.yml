@@ -20,7 +20,7 @@
         order: 20
         plugins:
           - id: tt-roleplay-agent
-            name: '@dsh-tt/roleplay'
+            name: '@dsh-tt/roleplay/agent'
             config:
               assetsDir: 'X:\dsh-tt'
               takeover: true

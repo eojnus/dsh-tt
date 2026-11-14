@@ -1,9 +1,9 @@
 # DSH × SillyTavern 角色扮演插件 · 设计文档
 
-> **状态**：v0.9 草案（已定 11 项决策；v1 已构建，见 §15）
+> **状态**：v1.0（2026-11-15，会话 28；Host 接管、EJS 跨块、TH 宿主与资产面板已构建，见 §21）
 > **维护方式**：本文件是唯一事实来源。每轮讨论后追加「决策记录」与「变更日志」，不推翻历史结论，只做带编号的修订。
 > **基线环境**：DeepSeek Harness Desktop，profile = `desktop`，构建日期 2026-11-14（DSH 事实以该安装为准，路径见附录 A）。
-> **已定决策**：D-001（被 D-006 取代）· D-002 Shadow Chat · D-003 首批范围 · D-004 不做 ST 扩展 JS 生态 · D-005 术语 · D-006 全局面板 + 侧栏入口 · D-007 聊天面与会话绑定 · D-008 UI 设计先加载技能 · D-009 必须兼容酒馆助手（TavernHelper）运行时 · D-010 里程碑重排 · **D-011 独立 RP 模式（agent preset：零工具、插件接管系统提示词）**。
+> **已定决策**：D-001（被 D-006 取代）· D-002 Shadow Chat · D-003 首批范围 · D-004 不做 ST 扩展 JS 生态 · D-005 术语 · D-006 全局面板 + 侧栏入口 · D-007 聊天面与会话绑定 · D-008 UI 设计先加载技能 · D-009 必须兼容酒馆助手（TavernHelper）运行时 · D-010 里程碑重排 · D-011 独立 RP 模式（agent preset：零工具、插件接管系统提示词）· D-017 root/agent 拆分 · D-018 资产按需读取 · D-019 TH iframe 宿主 · D-020 深度注入近似 · D-021 ST 固定内置段顺序。
 
 ---
 
@@ -506,6 +506,11 @@ interface ScriptRecord {
 | **D-009** | 2026-11-14 | **必须兼容酒馆助手（TavernHelper）**：自建白名单 API 运行时 + 隔离沙箱 + Host 代理远程脚本 | 参考卡与预设的价值几乎全在 TH 脚本与 MVU 变量上（§3.6） | 新增 L4；沙箱、事件、变量映射、远程代理全套设计（§4.8） |
 | **D-010** | 2026-11-14 | 里程碑重排：TH 运行时提到 M2/M3，交互层后移 M4 | 先让参考资产"活"过来，而不是先做 swipe 空壳 | 见 §7 |
 | **D-011** | 2026-11-14 | 新增**独立 RP 模式**：一个零工具的 `roleplay` agent preset，只提供会话与模型；系统提示词由插件在 `system-prompt/assemble` 整体接管，不挂 persona、不挂工具、不挂 compaction | 用户提案：模式只负责给插件一个聊天框；避免工具与默认提示词污染 RP | 见 §13；preset 与插件同 bundle；会话判定改为"绑定优先 + preset 辅助" |
+| **D-017** | 2026-11-15 | Host 拆成两个入口：根层 `@dsh-tt/roleplay` 只注册客户端模块；`@dsh-tt/roleplay/agent` 在 preset 的 agent 作用域内接管提示词，并声明 `inject = ['systemPrompt']` | Cordis 访问未声明注入的服务会抛 `cannot get property … without inject`（实测）；根层若声明 systemPrompt 又可能等待永不出现的服务，导致客户端模块不注册 | 根层 `index.js` 无副作用；`agent.js` 承担接管；profile 补丁的 preset 子行改为 `/agent` |
+| **D-018** | 2026-11-15 | 客户端不内嵌卡/预设/世界书正文；构建期快照只保留元数据，正文通过 `workspaceFiles.readBytes(sessionId, path, options, signal)` 读取 | 参考卡 4.6 MB、预设 1.5 MB；内嵌会撑大客户端包，也会把个人创作内容写进版本库 | `tools/snapshot.mjs` 输出 v3 元数据；`plugin/client.js` 约 200 KB；读取失败时面板显示诊断 |
+| **D-019** | 2026-11-15 | TH 运行时 = 隔离 iframe + `src/tavern/core.js`（纯状态/API）+ `src/tavern/shim.js`（DOM/ST/TH 全局）+ 面板 postMessage 桥；sandbox 用 `allow-scripts allow-same-origin` | JS-Slash-Runner 的 `SillyTavern` 全局与 `registerScriptPreference` 都依赖 `window.parent`；没有 same-origin 时 MVU 会因跨源访问失败而不启用 | 变量五作用域、消息变量、事件总线、世界书、宏、toastr、弹窗与 jQuery/lodash 子集已实现；`generate` 与聊天编辑 API 有明确边界（见 §21.9） |
+| **D-020** | 2026-11-15 | `@depth` / 绝对注入条目按深度**降序追加在 system 段末尾**，不插进对话消息之间 | 实测 `agent/pre-step` 的 `messages` 只允许 user 角色、且消息被冻结；`PreStepDecision.messages` 类型是 `UserMessage[]`，无法插入 system/assistant 消息 | 深度 0 最靠近对话；会话日志仍只有用户原文；后续若要逐消息注入，需要 Shadow Chat 或新的 Host API |
+| **D-021** | 2026-11-15 | 系统提示词按 ST 的**固定内置段顺序**（worldInfoBefore → main → worldInfoAfter → charDescription → charPersonality → scenario → personaDescription → nsfw → jailbreak）在前，`prompt_order` 只决定用户 prompt 部分的顺序；面板启停落到 `applyPresetOverrides` | 参考预设的 `prompt_order` 不含 `main`/`charDescription` 等内置 marker；旧实现只按 order 走，导致 Main Prompt 与卡字段整段丢失 | `renderPrompt` 内置段 + 用户段；`main`/内置段的启用状态也受覆盖控制 |
 
 ---
 
@@ -1130,6 +1135,137 @@ var TH_FEST_M = 4, TH_FEST_D = 8;
 
 ---
 
+## 21. v1.1 实现记录（2026-11-15，会话 28）
+
+> 本节记录本轮对 §15/§19/§20 的落地与对早期假设的**勘误**。不推翻历史结论：旧结论保留，以本节为准修订。
+
+### 21.1 本轮交付
+
+| 模块 | 状态 |
+|---|---|
+| Host 接管（`plugin/agent.js`） | ✅ `agent/inbox/inserted` 应用绑定 + `agent/pre-step` 剥离信封；`systemPrompt` 完整段；变量/开场白/预设覆盖 |
+| 根层入口（`plugin/index.js`） | ✅ 只注册客户端模块，无副作用 |
+| 预设安装结构 | ✅ preset 子行改为 `@dsh-tt/roleplay/agent`；`exports["./agent"]` |
+| EJS 运行时（`plugin/lib/ejs.js`） | ✅ 跨块、trim 标记、转义、路径变量、lodash 子集、faker、错误回退 |
+| ST 提示词顺序（`plugin/lib/prompt.js`） | ✅ 固定内置段 + `prompt_order` 用户段；`applyPresetOverrides` |
+| 资产快照（`tools/snapshot.mjs`） | ✅ v3 元数据；正文由客户端按需读取 |
+| 客户端面板（`src/client.template.js`） | ✅ 角色/世界书/预设/扩展/设置；世界书查看、预设 prompt 查看与启停 |
+| TH 宿主（`src/tavern/core.js` + `shim.js`） | ✅ iframe、变量五作用域、消息、事件、世界书、宏、toastr、弹窗、jQuery/lodash 子集 |
+| 输出侧渲染 | ✅ 显示作用域正则 + 输出 EJS（逐楼层变量） |
+| 实机 Host 验证 | ✅ 见 §21.8；新客户端面板的实机视觉验证仍待重启后完成 |
+
+### 21.2 真实 DSH 契约（对 §10/U1–U5 的勘误）
+
+以下均以当前安装（0.2.2-rc.3）源码与实机验证为准：
+
+| 项 | 结论 |
+|---|---|
+| `agent/pre-step` 签名 | `(payload, next)`，`payload = {agent, messages, turn, step, signal, modelSelection}`；`next()` 返回 `Promise<PreStepDecision>`，**不再把 decision 传给 next** |
+| `PreStepDecision` | `{kind:'reject'} \| {kind:'enter', messages: UserMessage[], startsRequestSeries?: true}`；`messages` 全是 **user 角色** |
+| 消息不可变 | `UserMessage` 的 `content` 是 readonly，消息被冻结；改写要新建对象（保留 `id`/`source`），返回新的 decision |
+| 日志来源 | `agent.ts` 用 **`decision.messages`** 写 `user/message`；在 pre-step 里替换 content 能让日志只留用户原文 |
+| 插入事件 | `agent/inbox/inserted({agent, message})` 在收件箱插入时触发；用它在 `system-prompt/assemble` **之前**应用绑定 |
+| `systemPrompt` | 必须在插件导出里声明 `inject = ['systemPrompt']`；否则访问抛 `cannot get property "systemPrompt" without inject`（实机日志） |
+| preset 的作用域 | `dsh-agent-preset-registry` 为每个 preset 定义 `createScope` 并 `mountPreset`；preset 内插件注册的 segment/listener 只属于该 preset 作用域，不会污染其他 preset 的 agent |
+| 资产读取 | `ctx.remote.workspaceFiles.readBytes(sessionId, path, options, signal)`；Client 的 `inject` 需含 `'remote.workspaceFiles'` |
+| 客户端模块 | 根层 Loader 条目必须存在；启动图按包 manifest 的 `dsh.client` 发布 `/plugins/<package>/client.js` 组合 URL；只改 manifest 需重启条目/Host |
+
+### 21.3 Host 接管流程（`plugin/agent.js`）
+
+```
+客户端 prompt 信封
+  │  \0TT\0{cardName|cardJson|presetName|presetJson|presetOverrides|variables|greeting}\0TT\0 + 用户正文
+  ▼
+agent/inbox/inserted ──► applyBinding()
+  │   卡/预设/覆盖/变量/开场白变化 → renderPrompt() + installSection()
+  ▼
+system-prompt assembly（complete:true 段）  ← 绑定已生效
+  ▼
+agent/pre-step ──► 复制 decision.messages，替换第一个文本块为正文
+  │   兜底：若 inbox 事件缺失，这里再 applyBinding 一次（慢一拍）
+  ▼
+session.append('user/message', 剥离后的消息)  ← 日志只有原文
+```
+
+- 根层 `index.js` 只 `apply()` 打一行日志，不读资产、不碰 systemPrompt；这样客户端模块在任何情况下都能被发现。
+- `agent.js` 的完整段 = `system` + `depthText`（深度降序）+ 开场白块；`depthText` 是 D-020 的近似。
+- 变量来自客户端信封的 `variables`（通常是 MVU 最新消息变量的合并），Host 的 EJS `getvar` 支持 `stat_data.…` 与 `全局.…` 两种路径。
+- 预设覆盖是 `{prompts: {identifier: boolean}}`（也接受 `{identifier, enabled}` 数组）；Host 只克隆，不写回原件。
+
+### 21.4 提示词引擎修正
+
+1. **固定内置段**：`worldInfoBefore → main → worldInfoAfter → charDescription → charPersonality → scenario → personaDescription → nsfw → jailbreak` 始终在前；`prompt_order` 只决定用户 prompt 段。参考预设的 `main`/`charDescription` 不在 `prompt_order` 里，旧实现会整段丢失。
+2. **跨块 EJS**：先收集原文，最后 `render(parts.join('\n\n'))`；depth 组按组合并后渲染；绝对注入条目在最后渲染（能看到前面 `setvar` 的变量）。
+3. **trim 标记**：`-%>` 与 `_%>` 吃掉后续换行；`<%_` 吃掉前面空白；`<%%` 输出字面 `<%`。
+4. **转义**：`<%= %>` HTML 转义，`<%- %>` 原样；旧实现两者都原样。
+5. **变量路径**：`getvar('stat_data.主要角色列表.x')` 逐段取值；找不到时回退到 `store.stat_data`；`readState()` 合并顶层 `stat_data` 键，兼容两种写法。
+6. **lodash/faker**：紧凑 `_`（get/set/has/集合/字符串/数值/merge/debounce…）与 `faker` 常用域；EJS 模板里 `_` 与 `faker` 可直接用。
+7. **错误回退**：模板异常时返回去掉标签的原文 + `<!-- dsh-tt EJS error: … -->`，不让请求失败，也不把 JS 源码送进模型。
+8. **结果**：参考卡 + 预设 `leftover <% count = 0`，`EJS error = 0`，系统段 40,890 字（含固定内置段；世界书 25/114、31,130 tokens）。
+
+### 21.5 资产通道与面板
+
+- `build/snapshot.json` 仍是构建期产物（`.gitignore` 排除）；`plugin/client.js` 只注入**元数据**（id/name/filePath/counts/tags），不再含卡正文/系统提示词预览。
+- 客户端资产加载器按 `filePath` 从 `workspaceFiles.readBytes` 读原件：PNG 走 `parseCardPng`，JSON 走 `parseJsonText`（去 BOM）；内存缓存，切换/重开面板会重读。
+- 面板 tab：对话 / 角色 / 世界书 / 预设 / 扩展 / 设置。
+  - 角色：导入（PNG/JSON）、导出、单击切换、双击开新局。
+  - 世界书：卡内 `character_book` + 独立世界书；搜索注释/关键词/内容；展开条目正文。
+  - 预设：预设列表、prompt 顺序（含不在 order 里的 prompt）、逐条启停、内容展开；启停写入 `store.presetOverrides`，随信封发送。
+  - 扩展：卡内 TH 脚本清单与启停、TH 宿主状态、脚本界面 iframe、状态变量 JSON、安全提示。
+  - 设置：session/workspaceFiles 状态、资产加载状态、诊断日志、变量作用域摘要。
+- 局部存储：主 store `dsh-tt:v3`（卡/预设/覆盖/会话元数据）；TH 状态 `dsh-tt:th:v1`（变量/消息变量/覆盖文本/设置），保存去抖并对消息数与会话数做裁剪。
+
+### 21.6 TH 宿主（D-019）
+
+- **结构**：`src/tavern/core.js`（纯状态 + TH API 语义，Node 可直接 require 测试）与 `src/tavern/shim.js`（iframe 内的 ST/TH 全局、toastr、`$`、`_`、弹窗桥、脚本执行）。构建时两份源码以字符串注入 `plugin/client.js`，面板用 `srcdoc` 创建 iframe。
+- **sandbox**：`allow-scripts allow-same-origin allow-forms allow-modals`。原因：TH 的 `registerScriptPreference` 与 `SillyTavern` 全局通过 `window.parent` 协调；`allow-scripts` 单开会让 MVU 在跨源访问时失败。风险与 JS-Slash-Runner 同级，面板显示提示。
+- **已覆盖的 ST/TH 面**：变量五作用域（global/character/chat/preset/script/message）、`getChatMessages`/`setChatMessages`（含 `swipes_data`/`data`/`extra`/range/负索引）、`create/delete/rotate`（镜像内生效）、事件总线、`substitudeMacros`、世界书读、`triggerSlash`（变量命令 + echo/pass/sys/sendas/comment）、`tavern_events`/`iframe_events`、`toastr`、`callGenericPopup`/`POPUP_*`、`SillyTavern.*`（chat/chatMetadata/characters/name1/name2/characterId/getCurrentChatId/getCharacterCardFields/loadWorldInfo/registerMacro/saveChat/saveSettingsDebounced/ToolManager/POPUP/eventSource/extensionSettings…）、jQuery 子集与 lodash 子集。
+- **MVU 初始化**：按卡内顺序逐个执行脚本；每个脚本启动前把 `#tavern_helper` 标记成该脚本自己的 id（复刻 TH 每脚本 iframe 的偏好语义），module 脚本等待 `load`；就绪后补发 `CHAT_CHANGED`/`APP_READY`/`SETTINGS_LOADED` 与一次 `GENERATION_STARTED`，让 MVU 在第一条用户消息之前完成 `[InitVar]` 初始化。
+- **数据回写**：变量更新 → `{tt:'vars'}`；消息变量/正文编辑 → `{tt:'message'}`（正文编辑只作为显示覆盖，不写 DSH 会话）；弹窗 → 面板 modal；toastr → 面板 toast；`saveSettingsDebounced` → 面板持久化。
+- **边界**：`generate`/`generateRaw` 明确拒绝（缺 Host 生成桥）；聊天 create/delete/rotate 只改镜像；`YAML` 全局未内置（MVU 自带）；远程热更脚本由 loader 自行 fetch/inject，受页面 CSP 与网络影响。
+
+### 21.7 输出侧渲染
+
+- 楼层正文先按显示作用域正则（`placement` 含 `2` 的规则，跳过 `promptOnly && !markdownOnly`）再走输出 EJS；用户楼层用 `placement=1`。
+- 每层用该楼层的 TH 消息变量（`thState.messages[sessionId][index]`）作为 EJS 变量，找不到时回退到最新非空变量。
+- 去掉 MVU 的 `<StatusPlaceHolderImpl/>` 与 `<status_current_variable>…</status_current_variable>` 占位；TH 的完整前端渲染（状态栏 HTML）尚未接到楼层。
+
+### 21.8 验证证据（可复现）
+
+1. **Host 组件装载**（克隆 profile + `dsh` CLI 启动 Web）：
+   ```
+   [dsh-tt] 根层入口：客户端模块已注册，提示词接管由 preset 内的 @dsh-tt/roleplay/agent 负责。
+   [dsh-tt] 资产：1 张卡 / 1 个预设 / 0 本世界书
+   [dsh-tt] 角色「春日狂想曲·统一版（玩家通道）」预设「导入的预设」 · 世界书 25/114（31130 tokens） · system 40803 字 ...
+   [dsh-tt] 已挂载 agent/inbox/inserted（绑定切换）。
+   [dsh-tt] 已挂载 agent/pre-step（信封剥离）。
+   ```
+   （该次运行在固定内置段修正之前；修正后 `system 40890`。）
+2. **启动图包含新客户端包**：`globalThis["__DSH_BOOT__"]` 的 entries 中有
+   `{"id":"@dsh-tt/roleplay","url":"plugins/??@dsh-tt/roleplay/client.js&rev=…"}`；
+   用认证 cookie 取该 URL 返回 200，内容含 `TT_CORE` / `createTavernHost` / `dsh-tt:v3` 标记。
+3. **真实会话**（通过 `/api/session/create` 建 `agentPreset:'roleplay'`，`/api/session/prompt` 发带信封的正文）：
+   - `system/message` 正文 40,837 字（修正前），包含 `苦主`（由信封变量 `牛头` 触发的分支）与开头白块 `[你的开场白…]`；
+   - `user/message` 正文 4 字 `测试正文`，不含 `\0TT\0` 信封；
+   - 证明 **绑定在 system 组装前生效**、**pre-step 剥离生效**、**日志只留原文**。
+4. **本地单元/集成测试**：`tmp/check-ejs2.mjs`（0 leftover / 0 error）、`tmp/test-host2.mjs`（预设 `main` 启停 40,890→40,803、换 V3 卡、`牛头` 变量、信封剥离）、`tmp/test-core.cjs`（消息 range/变量/事件/斜杠命令）。
+5. **客户端静态检查**：`node --check plugin/client.js` 通过；`tmp/render-test.cjs` 的假 React 渲染无异常；启动图 bundle 可取。
+
+### 21.9 未完成与下一步
+
+| 优先级 | 项 | 落点 |
+|---|---|---|
+| P0 | **重启后实机视觉验证新面板** | 需要完全退出并重开 DSH（Loader 图在启动时组合）；本轮运行中的实例仍是旧 bundle |
+| P1 | TH 在真实浏览器里的执行验证：MVU 是否初始化、变量补丁、状态栏 | 面板「扩展」→ 脚本界面/设置日志；若 MVU 报错，按 §21.6 的 API 面补 |
+| P1 | 提示词作用域正则（`promptOnly`）接到 Host 的请求文本 | `agent/pre-step` 对 assistant 历史按规则变换；`plugin/lib/regex.js` |
+| P2 | `@depth` 真正插入对话消息 | 需要 Shadow Chat 或 Host 新 API；当前 D-020 近似 |
+| P2 | TH `generate`/`generateRaw` 的 Host 生成桥 | Host 侧 Remote 或会话内生成调度；默认不阻塞 MVU |
+| P2 | 开场白选择器（alternate_greetings）与 swipe/编辑/删除 | 面板 chat 楼层操作；DSH 日志仅追加，需要 Shadow Chat 或本地覆盖 |
+| P3 | 世界书递归/sticky/cooldown/inclusion/outlet；采样参数透传 | §14.2、§14.3、M5 |
+| P3 | TH 远程脚本缓存与授权、YAML 全局、完整前端渲染 | 与 Host 代理/资源路由结合 |
+
+---
+
 ## 附录 A：事实出处（当前安装）
 
 基址：`C:\Users\Administrator\AppData\Local\Programs\DeepSeek Harness\resources\app.asar\dsh\node_modules\@deepseek-ai\`
@@ -1176,3 +1312,4 @@ var TH_FEST_M = 4, TH_FEST_D = 8;
 | v0.7 | 2026-11-14 | 研读 ST 源码（AGPL 只读语义）：新增 §14——世界书枚举/预算/扫描状态机/判定顺序/批处理/8 种位置装配，提示词组装的固定顺序与三类注入，正则 placement；给出对 §4.3/§4.4 的修正清单与"还没读的部分" |
 | v0.8 | 2026-11-14 | 读完剩余源码：补 §14.6 宏三段求值与完整宏表（含 `{{//}}`、`{{trim}}` 两个坑）、§14.7 swipe 数据模型与 overswipe、§14.8 STScript 注册方式与常用命令行号、§14.9 预设无版本号需宽容导入；`Floor.variants` 升级为带元数据的 `FloorVariant[]`；新增 R15（ST 字段漂移） |
 | v0.9 | 2026-11-14 | **v1 开工并构建完成**：Host 资产引擎（PNG/V3 解析、世界书激活、宏、ST 顺序提示词组装）+ 零工具 `roleplay` 预设 + 客户端工作台面板；新增 §15 实现记录、文件地图、能力边界、未验证项与缺口 |
+| v1.0 | 2026-11-15 | **v1.1 接管打通与 TH 宿主**：新增 §21 与 D-017..D-021；Host 拆 root/agent（`inject=['systemPrompt']`）、`inbox/inserted` + `pre-step` 信封剥离、固定内置段 + `prompt_order`、跨块 EJS、资产改为 `workspaceFiles` 按需读取、TH iframe 宿主（core/shim）、世界书/预设查看与启停、输出侧 EJS；实机会话验证 system 含绑定变量与开场白、user 日志只剩正文 |
