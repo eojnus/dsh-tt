@@ -570,13 +570,20 @@ window.__ModuleLoader__.load({
           return r?.records ?? r?.events ?? r ?? [];
         },
         async models() {
+          const call = () => session.modelCatalog
+            ? session.modelCatalog()
+            : (session.listModels ? session.listModels() : Promise.reject(new Error('no model catalog')));
           try {
             const r = await Promise.race([
-              session.listModels ? session.listModels() : Promise.reject(new Error('no listModels')),
-              new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 2500)),
+              call(),
+              new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 3000)),
             ]);
-            return r?.models ?? r ?? [];
-          } catch { return []; }
+            const rows = r?.models ?? r?.catalog ?? r?.entries ?? r ?? [];
+            return Array.isArray(rows) ? rows : [];
+          } catch (error) {
+            log('模型目录读取失败：' + (error && (error.code || error.message) || error));
+            return [];
+          }
         },
       };
     }
@@ -638,6 +645,64 @@ window.__ModuleLoader__.load({
       return '';
     }
 
+    function bytesToString(bytes) {
+      let out = '';
+      const step = 0x8000;
+      for (let i = 0; i < bytes.length; i += step) {
+        out += String.fromCharCode.apply(null, bytes.subarray(i, i + step));
+      }
+      return out;
+    }
+
+    // 从 PNG 的 tEXt/iTXt 块里取角色卡 JSON（与 Host 侧 lib/png.js 同源逻辑）
+    async function readCardFile(file) {
+      const isPng = /\.png$/i.test(file.name) || file.type === 'image/png';
+      if (!isPng) return JSON.parse(await file.text());
+
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+      const chunkText = (data) => {
+        const nul = data.indexOf(0);
+        if (nul <= 0) return null;
+        const keyword = bytesToString(data.subarray(0, nul));
+        const payload = bytesToString(data.subarray(nul + 1));
+        return { keyword, payload };
+      };
+      const decode = (payload) => {
+        const bin = Uint8Array.from(atob(payload), (c) => c.charCodeAt(0));
+        return JSON.parse(new TextDecoder('utf-8').decode(bin));
+      };
+
+      let offset = 8;
+      while (offset + 12 <= bytes.length) {
+        const length = view.getUint32(offset);
+        const type = bytesToString(bytes.subarray(offset + 4, offset + 8));
+        const start = offset + 8;
+        const data = bytes.subarray(start, start + length);
+        if (type === 'tEXt') {
+          const parsed = chunkText(data);
+          if (parsed && (parsed.keyword === 'chara' || parsed.keyword === 'ccv3')) return decode(parsed.payload);
+        } else if (type === 'iTXt') {
+          const nul = data.indexOf(0);
+          if (nul > 0) {
+            const keyword = bytesToString(data.subarray(0, nul));
+            if (keyword === 'chara' || keyword === 'ccv3') {
+              const flag = data[nul + 1];
+              if (flag === 0) {
+                const langEnd = data.indexOf(0, nul + 3);
+                const transEnd = data.indexOf(0, langEnd + 1);
+                return decode(new TextDecoder('utf-8').decode(data.subarray(transEnd + 1)));
+              }
+              throw new Error('PNG 里的角色卡是压缩块，暂不支持');
+            }
+          }
+        }
+        offset = start + length + 4;
+        if (type === 'IEND') break;
+      }
+      throw new Error('这个 PNG 里没有 chara / ccv3 文本块');
+    }
+
     function toFloors(records) {
       const out = [];
       for (const record of records || []) {
@@ -692,6 +757,14 @@ window.__ModuleLoader__.load({
       const activePreset = store.presets.find((p) => p.id === store.activePresetId) || null;
 
       // 会话列表
+      // 取卡片可用的原始字段：导入的用 raw，内置的用快照里的 rawLite。
+      const rawOf = useCallback((item) => {
+        if (!item) return null;
+        if (item.raw) return item.raw;
+        const seed = (SNAPSHOT.cards || []).find((c) => c.id === item.id);
+        return seed?.rawLite ?? null;
+      }, []);
+
       const refreshSessions = useCallback(async () => {
         if (!bridge?.ok) { log('ctx.remote.session 不可用，会话功能停用'); return; }
         try {
@@ -739,7 +812,40 @@ window.__ModuleLoader__.load({
         if (el) el.scrollTop = el.scrollHeight;
       }, [floors.length]);
 
+      const startChat = useCallback(async (card) => {
+        if (!card) return;
+        if (!bridge?.ok) { log('会话通道不可用，无法开局'); return; }
+        patchStore({ activeCardId: card.id });
+        const stamp = new Date().toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+        const title = RP_PREFIX + card.name + ' · ' + stamp;
+        setBusy(true);
+        try {
+          const created = await bridge.create(title, 'roleplay');
+          const id = created?.sessionId ?? created?.id ?? created?.address?.sessionId ?? created?.session?.sessionId ?? created?.value?.sessionId ?? null;
+          if (!id) { log('已创建会话但没拿到 id：' + JSON.stringify(created).slice(0, 240)); return; }
+          setActiveId(id);
+          setView('chat');
+          setFloors([]);
+          const raw = rawOf(card);
+          const inner = raw?.data ?? raw ?? {};
+          const greeting = String(inner.first_mes || inner.firstMes || (inner.alternate_greetings || inner.alternateGreetings || [])[0] || '').trim();
+          if (greeting) {
+            await bridge.prompt(id, greeting, []);
+            log('开场白已发送（' + greeting.length + ' 字）');
+          } else {
+            log('这张卡没有开场白，直接开始即可');
+          }
+          await refreshSessions();
+        } catch (error) {
+          log('开始对话失败：' + (error && (error.code || error.message) || error));
+        } finally { setBusy(false); }
+      }, [bridge, patchStore, rawOf, refreshSessions, log]);
+
       const newChat = useCallback(async () => {
+        await startChat(activeCard);
+      }, [startChat, activeCard]);
+
+      const legacyNewChat = useCallback(async () => {
         if (!bridge?.ok) { log('无法新建：会话通道不可用'); return; }
         const stamp = new Date().toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
         const title = `${RP_PREFIX}${activeCard?.name ?? '角色扮演'} · ${stamp}`;
@@ -754,6 +860,7 @@ window.__ModuleLoader__.load({
           log(`新建失败：${error?.code || error?.message || error}`);
         } finally { setBusy(false); }
       }, [bridge, activeCard, refreshSessions, log]);
+
 
       const send = useCallback(async () => {
         const text = draft.trim();
@@ -773,8 +880,7 @@ window.__ModuleLoader__.load({
         event.target.value = '';
         for (const file of files) {
           try {
-            const text = await file.text();
-            const json = JSON.parse(text);
+            const json = await readCardFile(file);
             if (Array.isArray(json.prompts) || Array.isArray(json.prompt_order)) {
               const id = `preset-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
               patchStore({ presets: [...store.presets, { id, name: json.name || file.name, counts: { prompts: json.prompts?.length ?? 0 }, source: 'import', raw: json }] });
@@ -812,13 +918,6 @@ window.__ModuleLoader__.load({
         a.click();
         URL.revokeObjectURL(url);
       }, [activePreset, activeCard]);
-
-      const rawOf = useCallback((item) => {
-        if (!item) return null;
-        if (item.raw) return item.raw;
-        const seed = (SNAPSHOT.cards || []).find((c) => c.id === item.id);
-        return seed?.rawLite ?? null;
-      }, []);
 
       const displayRules = useMemo(() => {
         const card = rawOf(activeCard);
@@ -904,7 +1003,7 @@ window.__ModuleLoader__.load({
           store.cards.map((card) => h('div', {
             key: card.id,
             className: 'tt-card' + (card.id === store.activeCardId ? ' on' : ''),
-            onClick: () => patchStore({ activeCardId: card.id }),
+            onClick: () => startChat(card),
           },
             h('b', null, card.name),
             h('small', null, `${card.spec || ''} · 世界书 ${card.counts?.lorebookEntries ?? 0} 条`),
@@ -1040,7 +1139,7 @@ window.__ModuleLoader__.load({
     }
 
     return {
-      inject: ['slots'],
+      inject: ['slots', 'remote', 'remote.session'],
       apply(ctx) {
         try {
           ctx.slots.inject('main', () => ctx.slots.register(
