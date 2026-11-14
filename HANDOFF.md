@@ -323,6 +323,8 @@ Remove-Item "C:\Users\Administrator\.dsh\profiles\desktop-verify" -Recurse -Forc
 
 ## 12. Git 状态
 
-- 本轮改动：`plugin/{index.js,agent.js,package.json,cordis.patch.yml,docs/DETAIL.md}`、`plugin/lib/{ejs,prompt,macros,lorebook,decorators}.js`、`src/client.template.js`、`src/tavern/{core,shim}.js`、`tools/{snapshot,build-client}.mjs`、`DESIGN.md`、`HANDOFF.md`、`.gitignore`（如需排除生成物）。
-- 提交信息建议：`feat: 打通 Host 接管 + TH 宿主 + 资产面板（v0.2）`。
-- 若发现 `plugin/client.js` 含个人正文，检查 `tools/build-client.mjs` 是否又把 `snapshot.active` 注入；当前只注入 `clientSnapshot` 元数据。
+- 本轮提交：**`f8ff70f`** — `feat: 打通 Host 接管 + TH 宿主 + 资产面板（v0.2）`（18 files，+6732/−1355）。
+- 改动：`plugin/{index.js,agent.js,package.json,cordis.patch.yml,docs/DETAIL.md}`、`plugin/lib/{ejs,prompt,macros,lorebook,decorators}.js`、`src/client.template.js`、`src/tavern/{core,shim}.js`、`tools/{snapshot,build-client}.mjs`、`DESIGN.md`、`HANDOFF.md`。
+- `plugin/client.js` 是生成物，已随提交更新（约 199.9 KB）；若要排除它，需同时改 `.gitignore` 与安装说明，并确保首次安装前先 build。
+- 仍未验证的接口形状：`session/list` 的 `value` 精确形状（代码兼容 `sessions`/`rows`/`items`/数组）、`session/selectModel` 的入参（代码尝试 `{sessionId, provider, model}` 与 `{sessionId, selection}`）。
+
