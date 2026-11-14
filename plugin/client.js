@@ -515,86 +515,99 @@ window.__ModuleLoader__.load({
 
     // ───────────────────────────── 会话桥 ─────────────────────────────
     function makeBridge(ctx, log) {
-      let remote = null;
       let session = null;
       try {
-        remote = ctx ? ctx.remote : null;
-        session = remote ? remote.session : null;
+        session = ctx && ctx.remote ? ctx.remote.session : null;
       } catch (error) {
-        log(`ctx.remote.session 访问失败：${error && (error.message || error)}`);
+        log('ctx.remote.session 访问失败：' + (error && (error.message || error)));
       }
       const ok = Boolean(session);
 
-      async function attempt(label, fns) {
-        let last;
-        for (const fn of fns) {
-          try { return await fn(); } catch (error) { last = error; }
+      // Typert Remote 统一返回 { ok, value } / { ok:false, error:{code,message} }
+      const unwrap = (response) => {
+        if (response && typeof response === 'object' && 'ok' in response) {
+          if (!response.ok) {
+            const detail = response.error || {};
+            const failure = new Error((detail.code || 'remote/error') + ': ' + (detail.message || ''));
+            failure.code = detail.code;
+            throw failure;
+          }
+          return response.value;
         }
-        log(`${label} 失败：${last && (last.code || last.message) || last}`);
-        throw last;
-      }
+        return response;
+      };
 
-      const rid = () => (globalThis.crypto?.randomUUID
-        ? globalThis.crypto.randomUUID()
+      const call = async (label, fn) => {
+        try {
+          return unwrap(await fn());
+        } catch (error) {
+          log(label + ' 失败：' + (error && (error.code || error.message) || error));
+          throw error;
+        }
+      };
+
+      const rid = () => (globalThis.crypto && crypto.randomUUID
+        ? crypto.randomUUID()
         : 'tt-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8));
+      const zone = () => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { return undefined; } };
 
       return {
         ok,
         async list() {
-          const r = await attempt('session.list', [
-            () => session.list(),
-            () => session.list({}),
-          ]);
-          if (Array.isArray(r)) return r;
-          return r?.sessions ?? r?.rows ?? r?.items ?? [];
+          const value = await call('session/list', () => session.list({}));
+          const rows = Array.isArray(value) ? value : (value && (value.sessions || value.rows || value.items)) || [];
+          return Array.isArray(rows) ? rows : [];
         },
-        // SessionCreateRequest: { workspaceId?, cwd?, sessionId?, agentPreset? }（title 不在其中）
         async create(presetId) {
-          return attempt('session.create', [
-            () => session.create({ agentPreset: presetId, cwd: STORE_ROOT }),
-            () => session.create({ agentPreset: presetId }),
-            () => session.create({}),
-          ]);
+          return call('session/create', () => session.create({ agentPreset: presetId, cwd: STORE_ROOT }));
         },
-        // 标题走 session/rename
         async rename(sessionId, title) {
-          try { return await session.rename({ sessionId, title }); }
-          catch (error) { log('重命名失败：' + (error && (error.code || error.message) || error)); return null; }
+          try { return await call('session/rename', () => session.rename({ sessionId, title })); }
+          catch { return null; }
         },
-        // SessionPromptRequest: 必填 requestId / sessionId / mode / content[]
         async prompt(sessionId, text) {
-          const body = {
+          return call('session/prompt', () => session.prompt({
             requestId: rid(),
             sessionId,
             mode: 'queue',
             content: [{ type: 'text', text }],
-            clientTimeZone: (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { return undefined; } })(),
-          };
-          return attempt('session.prompt', [() => session.prompt(body)]);
+            clientTimeZone: zone(),
+          }));
         },
-        // SessionPageRequest: { address: { kind: 'session', sessionId }, ... }
-        async events(sessionId, throughSeq) {
-          const r = await attempt('session.events', [
-            () => session.events({ address: { kind: 'session', sessionId }, throughSeq, maxMessages: 200 }),
-            () => session.events({ address: { kind: 'session', sessionId }, maxMessages: 200 }),
-          ]);
-          return r?.records ?? [];
+        async events(sessionId) {
+          const value = await call('session/events', () => session.events({
+            address: { kind: 'session', sessionId },
+            maxMessages: 200,
+          }));
+          return (value && value.records) || [];
         },
         async models() {
-          const call = () => session.modelCatalog
-            ? session.modelCatalog()
-            : (session.listModels ? session.listModels() : Promise.reject(new Error('no model catalog')));
           try {
-            const r = await Promise.race([
-              call(),
-              new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 3000)),
-            ]);
-            const rows = r?.models ?? r?.catalog ?? r?.entries ?? r ?? [];
-            return Array.isArray(rows) ? rows : [];
-          } catch (error) {
-            log('模型目录读取失败：' + (error && (error.code || error.message) || error));
-            return [];
+            const value = await call('session/modelCatalog', () => session.modelCatalog());
+            const groups = (value && value.groups) || [];
+            const flat = [];
+            for (const group of groups) {
+              for (const model of group.models || []) {
+                flat.push({
+                  provider: group.id || group.provider || '',
+                  model: model.id || model.model || '',
+                  label: model.label || model.name || model.id || model.model || '',
+                });
+              }
+            }
+            return flat;
+          } catch { return []; }
+        },
+        async selectModel(sessionId, provider, model) {
+          const bodies = [
+            { sessionId, provider, model },
+            { sessionId, selection: { provider, model } },
+          ];
+          for (const body of bodies) {
+            try { await call('session/selectModel', () => session.selectModel(body)); return true; }
+            catch {}
           }
+          return false;
         },
       };
     }
@@ -1103,13 +1116,21 @@ window.__ModuleLoader__.load({
             h('span', null, '⚙️'),
             h('select', {
               defaultValue: '',
-              onChange: (e) => log(`模型切换请求：${e.target.value}（待接通 selectModel）`),
+              onChange: async (e) => {
+                const raw = e.target.value;
+                if (!raw || !activeId) { log('先选一局再切模型'); return; }
+                const cut = raw.indexOf('/');
+                const provider = cut > 0 ? raw.slice(0, cut) : '';
+                const model = cut > 0 ? raw.slice(cut + 1) : raw;
+                const done = await bridge.selectModel(activeId, provider, model);
+                log(done ? `模型已切到 ${raw}` : `模型切换失败：${raw}`);
+              },
             },
             h('option', { value: '' }, models.length ? '跟随会话' : '默认模型'),
             models.map((m) => {
-              const value = typeof m === 'string' ? m : (m.id ?? m.model ?? `${m.provider}/${m.model}`);
-              const label = typeof m === 'string' ? m : (m.label ?? m.name ?? value);
-              return h('option', { key: String(value), value: String(value) }, String(label));
+              const value = m && m.provider ? m.provider + '/' + m.model : String(m);
+              const label = (m && (m.label || m.model)) || value;
+              return h('option', { key: value, value }, String(label));
             })),
           ),
         ),
