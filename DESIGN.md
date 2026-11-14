@@ -1074,6 +1074,62 @@ JS-Slash-Runner 自带菜单（脚本管理、变量查看/编辑、扩展设置
 
 ---
 
+## 20. 必装扩展之二：ST-Prompt-Template（EJS 模板）
+
+> 已核实：**`zonde306/ST-Prompt-Template`**（518★，AGPL-3.0），描述为 *"Using Template Syntax (EJS) in Prompt"*。这就是你说的"提示词模板"，很多卡直接依赖它。
+
+### 20.1 它做什么
+
+| 能力 | 说明 |
+|---|---|
+| **发送前渲染** | 在 prompt / 角色卡 / 世界书里写 `<% ... %>` 与 `<%- 表达式 %>`，发给模型**之前**执行 |
+| **收言后渲染** | 模型输出里的 `<% %>` 在收到**之后**执行（可用它更新变量、改变显示） |
+| **内容注入** | 世界书条目标题里的 `[GENERATE:BEFORE]` / `[GENERATE:AFTER]`，把内容插到上下文首尾 |
+| **Prompt 注入** | `@INJECT` 语法：把整条 `{role, content}` 按绝对位置、相对位置或正则命中处插入 |
+| **API** | `getvar` / `setvar` / `getwi` / `getchar` 等；变量分 `global` / `local`（本聊天）/ `message` 三级；内建 `_`（lodash）、`faker` |
+| **兼容** | 与 ST 原生宏并存（先宏后模板，或反之，按其实现） |
+
+### 20.2 为什么我们**必须**支持它
+
+我在生成系统提示词预览时就见过证据：参考预设的 prompt 正文里直接含有
+
+```
+<%
+/* ★ v164：日期直接读 /时间/月份 + /时间/日期 */
+var TH_FEST_M = 4, TH_FEST_D = 8;
+...
+%>
+```
+
+**不渲染 EJS，这些 JS 源码就原样进了模型上下文**——既浪费 token，又让模型看到一堆代码。这解释了为什么"提示词看起来完全不对"。
+
+### 20.3 与 C 架构的衔接（客户端渲染管线）
+
+既然提示词由客户端组装（D-016 拟定），EJS 就放在客户端管线的第一段：
+
+```
+卡字段 / 预设 prompt / 世界书条目
+   ↓ ① EJS 渲染（沙箱：<% %>、<%- %>；作用域 getvar/setvar/getwi）
+   ↓ ② ST 宏（{{char}} {{//}} {{setvar}} …）
+   ↓ ③ prompt 作用域正则（placement=5 等）
+   ↓ ④ marker 定位 + @INJECT / [GENERATE:*] 注入 → system + messages
+   ↓ ⑤ 信封发给 Host（Host 只剥离、替换、落日志）
+
+模型输出 → ⑥ 显示作用域正则 → ⑦ 输出侧 EJS（更新变量）→ 渲染成楼层
+```
+
+### 20.4 安全与许可
+
+- EJS 就是任意 JS：与 TH 脚本同一套沙箱策略（独立 iframe/Worker，白名单 API），默认对"用户自己导入的卡/预设"放行，对远程来源二次确认。
+- 它的许可也是 **AGPL-3.0**：与 ST 本体一样，我们**只复刻行为语义**，不复制代码（R14 已覆盖）。
+- 它与 JS-Slash-Runner 互补：一个管**文本模板**，一个管**脚本与 UI**。两者都需要 ST 的若干 API，可以共用同一个 shim 层。
+
+### 20.5 D-016（拟定）
+
+**两套扩展（JS-Slash-Runner + ST-Prompt-Template）都作为内置扩展，默认启用**，共用同一个沙箱宿主；扩展页展示其状态、版本与开关。
+
+---
+
 ## 附录 A：事实出处（当前安装）
 
 基址：`C:\Users\Administrator\AppData\Local\Programs\DeepSeek Harness\resources\app.asar\dsh\node_modules\@deepseek-ai\`

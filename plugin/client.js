@@ -1145,7 +1145,13 @@ window.__ModuleLoader__.load({
         id: 'js-slash-runner',
         name: '酒馆助手（JS-Slash-Runner）',
         repo: 'N0VI028/JS-Slash-Runner',
-        description: 'ST 扩展宿主：运行卡内脚本、变量与前端 UI。内置并在开局时启用。',
+        description: 'ST 扩展宿主：运行卡内脚本、变量与前端 UI。内置并默认启用。',
+      },
+      {
+        id: 'st-prompt-template',
+        name: '提示词模板（ST-Prompt-Template）',
+        repo: 'zonde306/ST-Prompt-Template',
+        description: '在 prompt / 角色卡 / 世界书里渲染 EJS（<% %>），支持 @INJECT 与 [GENERATE:*] 注入。内置并默认启用。',
       },
     ];
 
