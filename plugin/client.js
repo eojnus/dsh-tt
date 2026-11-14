@@ -515,8 +515,14 @@ window.__ModuleLoader__.load({
 
     // ───────────────────────────── 会话桥 ─────────────────────────────
     function makeBridge(ctx, log) {
-      const remote = ctx.remote;
-      const session = remote && remote.session;
+      let remote = null;
+      let session = null;
+      try {
+        remote = ctx ? ctx.remote : null;
+        session = remote ? remote.session : null;
+      } catch (error) {
+        log(`ctx.remote.session 访问失败：${error && (error.message || error)}`);
+      }
       const ok = Boolean(session);
 
       async function attempt(label, fns) {
@@ -988,6 +994,38 @@ window.__ModuleLoader__.load({
       );
     }
 
+    // 面板兜底：任何渲染异常都显示成可读的错误，而不是白屏。
+    class Boundary extends React.Component {
+      constructor(props) {
+        super(props);
+        this.state = { error: null };
+      }
+      static getDerivedStateFromError(error) {
+        return { error };
+      }
+      componentDidCatch(error, info) {
+        console.error('[dsh-tt] panel crashed', error, info);
+        try {
+          window.__dshTT = { error: String(error && error.stack || error), at: Date.now() };
+        } catch {}
+      }
+      render() {
+        const error = this.state.error;
+        if (error) {
+          const detail = error.stack || error.message || String(error);
+          try { window.__dshTT = { error: detail, at: Date.now() }; } catch {}
+          return h('div', {
+            style: {
+              padding: '24px', fontFamily: 'ui-monospace, Menlo, monospace', fontSize: '12px',
+              lineHeight: 1.7, whiteSpace: 'pre-wrap', overflow: 'auto', height: '100%',
+              color: 'var(--dsw-alias-text-primary, #eee)', background: 'var(--dsw-alias-background-primary, #141414)',
+            },
+          }, '角色扮演面板出错：\n\n' + detail);
+        }
+        return this.props.children;
+      }
+    }
+
     function PanelIcon({ size }) {
       const px = size || 16;
       return h('svg', {
@@ -1005,13 +1043,17 @@ window.__ModuleLoader__.load({
       inject: ['slots'],
       apply(ctx) {
         try {
-          ctx.slots.inject('main', () => ctx.slots.register({ name: 'main', key: 'roleplay' }, () => h(Panel, { __ctx: ctx })));
+          ctx.slots.inject('main', () => ctx.slots.register(
+            { name: 'main', key: 'roleplay' },
+            () => h(Boundary, null, h(Panel, { __ctx: ctx })),
+          ));
           ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
             name: 'sidebar.panellist', id: 'roleplay', order: 20, label: () => '角色扮演',
           }, PanelIcon));
           console.info('[dsh-tt] client module loaded');
         } catch (error) {
           console.error('[dsh-tt] client activation failed', error);
+          try { window.__dshTT = { error: String(error && error.stack || error), at: Date.now(), phase: 'apply' }; } catch {}
           throw error;
         }
       },
