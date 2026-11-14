@@ -60,7 +60,7 @@
 | `src/client.template.js` | 新面板：资产按需读取、世界书/预设查看、TH 宿主、输出 EJS、诊断 |
 | `src/tavern/core.js` | **新增**：TH 纯状态/API 语义（Node 可 require 测试） |
 | `src/tavern/shim.js` | **新增**：iframe 内 ST/TH 全局、toastr、`$`、`_`、弹窗桥、脚本执行 |
-| `plugin/client.js` | 构建产物（约 199.9 KB：快照 0.9 + 核心 44.1 + shim 56.3 + 面板）；由 `tools/build-client.mjs` 生成，勿手改 |
+| `plugin/client.js` | 构建产物（约 200.7 KB：快照 0.9 + 核心 44.1 + shim 56.3 + 面板）；由 `tools/build-client.mjs` 生成，勿手改 |
 | `tools/snapshot.mjs` | 资产 → `build/snapshot.json`（v3 元数据；含 `filePath`，不含正文） |
 | `tools/build-client.mjs` | 注入快照、`src/tavern/core.js`、`src/tavern/shim.js` |
 | `build/` | 生成物与验证日志（`.gitignore` 排除） |
@@ -171,7 +171,7 @@ node --check src/tavern/shim.js
 
 ```
 snapshot: cards=1 presets=1 lorebooks=0 errors=0 | active=春日狂想曲-统一版-玩家通道-0 wi=23/114 sys=44667
-client.js 已生成（199.9 KB：快照 0.9 KB、核心 44.1 KB、shim 56.3 KB）
+client.js 已生成（200.7 KB：快照 0.9 KB、核心 44.1 KB、shim 56.3 KB）
 ```
 
 ### 7.2 本地测试
@@ -323,8 +323,12 @@ Remove-Item "C:\Users\Administrator\.dsh\profiles\desktop-verify" -Recurse -Forc
 
 ## 12. Git 状态
 
-- 本轮提交：**`f8ff70f`** — `feat: 打通 Host 接管 + TH 宿主 + 资产面板（v0.2）`（18 files，+6732/−1355）。
+- 本轮提交：
+  - **`f8ff70f`** — `feat: 打通 Host 接管 + TH 宿主 + 资产面板（v0.2）`（18 files，+6732/−1355）
+  - **`95960ed`** — `fix: 面板仅向角色扮演会话发送；默认不自动选普通会话；新局先取资产作用域`
+  - `dc60a93` — HANDOFF 记录
 - 改动：`plugin/{index.js,agent.js,package.json,cordis.patch.yml,docs/DETAIL.md}`、`plugin/lib/{ejs,prompt,macros,lorebook,decorators}.js`、`src/client.template.js`、`src/tavern/{core,shim}.js`、`tools/{snapshot,build-client}.mjs`、`DESIGN.md`、`HANDOFF.md`。
-- `plugin/client.js` 是生成物，已随提交更新（约 199.9 KB）；若要排除它，需同时改 `.gitignore` 与安装说明，并确保首次安装前先 build。
+- `plugin/client.js` 是生成物，已随提交更新（约 200.7 KB）；若要排除它，需同时改 `.gitignore` 与安装说明，并确保首次安装前先 build。
 - 仍未验证的接口形状：`session/list` 的 `value` 精确形状（代码兼容 `sessions`/`rows`/`items`/数组）、`session/selectModel` 的入参（代码尝试 `{sessionId, provider, model}` 与 `{sessionId, selection}`）。
+- 面板发送门禁：只有 `sessionMeta` 存在或标题以 `RP · ` 开头的局才允许发送；普通 DSH 会话在面板里只读，避免信封泄漏到非 preset 会话。
 

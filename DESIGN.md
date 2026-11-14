@@ -1201,7 +1201,7 @@ session.append('user/message', 剥离后的消息)  ← 日志只有原文
 5. **变量路径**：`getvar('stat_data.主要角色列表.x')` 逐段取值；找不到时回退到 `store.stat_data`；`readState()` 合并顶层 `stat_data` 键，兼容两种写法。
 6. **lodash/faker**：紧凑 `_`（get/set/has/集合/字符串/数值/merge/debounce…）与 `faker` 常用域；EJS 模板里 `_` 与 `faker` 可直接用。
 7. **错误回退**：模板异常时返回去掉标签的原文 + `<!-- dsh-tt EJS error: … -->`，不让请求失败，也不把 JS 源码送进模型。
-8. **结果**：参考卡 + 预设 `leftover <% count = 0`，`EJS error = 0`，系统段 40,890 字（含固定内置段；世界书 25/114、31,130 tokens）。
+8. **结果**：参考卡 + 预设 `leftover <% count = 0`，`EJS error = 0`，装饰器残留 0；系统段 **44,667 字**（空变量/默认日期；世界书 23/114、30,495 tokens），带 `牛头` 变量与开场白的实机会话为 **48,702 字**。
 
 ### 21.5 资产通道与面板
 
@@ -1240,15 +1240,15 @@ session.append('user/message', 剥离后的消息)  ← 日志只有原文
    [dsh-tt] 已挂载 agent/inbox/inserted（绑定切换）。
    [dsh-tt] 已挂载 agent/pre-step（信封剥离）。
    ```
-   （该次运行在固定内置段修正之前；修正后 `system 40890`。）
+   （该次运行在固定内置段修正之后、装饰器修正之前；装饰器修正后为 `system 44667`、`23/114`。）
 2. **启动图包含新客户端包**：`globalThis["__DSH_BOOT__"]` 的 entries 中有
    `{"id":"@dsh-tt/roleplay","url":"plugins/??@dsh-tt/roleplay/client.js&rev=…"}`；
    用认证 cookie 取该 URL 返回 200，内容含 `TT_CORE` / `createTavernHost` / `dsh-tt:v3` 标记。
 3. **真实会话**（通过 `/api/session/create` 建 `agentPreset:'roleplay'`，`/api/session/prompt` 发带信封的正文）：
-   - `system/message` 正文 40,837 字（修正前），包含 `苦主`（由信封变量 `牛头` 触发的分支）与开头白块 `[你的开场白…]`；
+   - `system/message` 正文 **48,702 字**（最终构建），包含 `苦主`（由信封变量 `牛头` 触发的分支）、Main Prompt 文本与开头白块 `[你的开场白…]`；
    - `user/message` 正文 4 字 `测试正文`，不含 `\0TT\0` 信封；
    - 证明 **绑定在 system 组装前生效**、**pre-step 剥离生效**、**日志只留原文**。
-4. **本地单元/集成测试**：`tmp/check-ejs2.mjs`（0 leftover / 0 error）、`tmp/test-host2.mjs`（预设 `main` 启停 40,890→40,803、换 V3 卡、`牛头` 变量、信封剥离）、`tmp/test-core.cjs`（消息 range/变量/事件/斜杠命令）。
+4. **本地单元/集成测试**：`tmp/check-ejs2.mjs`（0 leftover / 0 error / 0 decorator）、`tmp/test-host2.mjs`（预设 `main` 启停 44,667→44,580、换 V3 卡、`牛头` 变量、信封剥离）、`tmp/test-core.cjs`（消息 range/变量/事件/斜杠命令）。
 5. **客户端静态检查**：`node --check plugin/client.js` 通过；`tmp/render-test.cjs` 的假 React 渲染无异常；启动图 bundle 可取。
 
 ### 21.9 未完成与下一步
