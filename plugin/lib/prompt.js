@@ -51,14 +51,29 @@ function markerContent(marker, { card, lorebook, env, persona, preset }) {
 }
 
 /**
- * 渲染 system 段与 tail 段。
- * @returns {{ system: string, tail: string, depth: {role:string, content:string}[] }}
+ * 渲染 system 段、tail 段与"在对话中按深度注入"的条目。
+ * ST 语义：injection_position = 0（相对 system）/ 1（绝对注入，按 injection_depth 插进对话）。
+ * @returns {{ system: string, tail: string, depth: {role:string, content:string}[], injected: {role:string, content:string, depth:number}[] }}
  */
 export function renderPrompt({ card, preset, lorebook, persona, env, macroOptions }) {
   const parts = [];
+  const injected = [];
   const push = (text) => {
     const value = substitute(String(text ?? ''), env, macroOptions).trim();
     if (value) parts.push(value);
+  };
+
+  const consumePrompt = (prompt) => {
+    if (!prompt || prompt.enabled === false) return;
+    const content = prompt.content;
+    if (!content) return;
+    const isAbsolute = Number(prompt.injection_position) === 1;
+    if (isAbsolute) {
+      const depth = Number(prompt.injection_depth) || 0;
+      injected.push({ role: prompt.role || 'system', content, depth });
+      return;
+    }
+    push(content);
   };
 
   const hasOrder = preset?.order?.length;
@@ -70,9 +85,7 @@ export function renderPrompt({ card, preset, lorebook, persona, env, macroOption
         push(markerContent(identifier, { card, lorebook, env, persona, preset }));
         continue;
       }
-      const prompt = promptByIdentifier(preset, identifier);
-      if (!prompt) continue;
-      push(prompt.content);
+      consumePrompt(promptByIdentifier(preset, identifier));
     }
   } else {
     // 没有预设时的 ST 默认顺序
@@ -106,5 +119,5 @@ export function renderPrompt({ card, preset, lorebook, persona, env, macroOption
     depth.push({ role: card.depthPrompt.role || 'system', content: substitute(card.depthPrompt.prompt, env, macroOptions) });
   }
 
-  return { system, tail, depth };
+  return { system, tail, depth, injected };
 }

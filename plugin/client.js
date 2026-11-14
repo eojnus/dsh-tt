@@ -565,12 +565,13 @@ window.__ModuleLoader__.load({
           try { return await call('session/rename', () => session.rename({ sessionId, title })); }
           catch { return null; }
         },
-        async prompt(sessionId, text) {
+        async prompt(sessionId, text, binding) {
+          const wire = (binding ? '\u0000TT\u0000' + JSON.stringify(binding) + '\u0000TT\u0000' : '') + text;
           return call('session/prompt', () => session.prompt({
             requestId: rid(),
             sessionId,
             mode: 'queue',
-            content: [{ type: 'text', text }],
+            content: [{ type: 'text', text: wire }],
             clientTimeZone: zone(),
           }));
         },
@@ -857,7 +858,7 @@ window.__ModuleLoader__.load({
           const inner = raw?.data ?? raw ?? {};
           const greeting = String(inner.first_mes || inner.firstMes || (inner.alternate_greetings || inner.alternateGreetings || [])[0] || '').trim();
           if (greeting) {
-            await bridge.prompt(id, greeting, []);
+            await bridge.prompt(id, greeting, bindingOf(card, activePreset));
             log('开场白已发送（' + greeting.length + ' 字）');
           } else {
             log('这张卡没有开场白，直接开始即可');
@@ -868,7 +869,7 @@ window.__ModuleLoader__.load({
           log(message);
           setNotice(message);
         } finally { setBusy(false); }
-      }, [bridge, patchStore, rawOf, refreshSessions, log]);
+      }, [bridge, patchStore, rawOf, refreshSessions, log, bindingOf, activePreset]);
 
       const newChat = useCallback(async () => {
         await startChat(activeCard);
@@ -891,6 +892,13 @@ window.__ModuleLoader__.load({
       }, [bridge, activeCard, refreshSessions, log]);
 
 
+      const bindingOf = useCallback((card, preset) => ({
+        cardName: card ? card.name : undefined,
+        presetName: preset ? preset.name : undefined,
+        cardJson: card && card.raw ? card.raw : null,
+        presetJson: preset && preset.raw ? preset.raw : null,
+      }), []);
+
       const send = useCallback(async () => {
         const text = draft.trim();
         if (!text || !activeId || busy) return;
@@ -898,11 +906,11 @@ window.__ModuleLoader__.load({
         setDraft('');
         setFloors((prev) => [...prev, { id: `local-${Date.now()}`, role: 'user', text, seq: -1, time: Date.now() }]);
         try {
-          await bridge.prompt(activeId, text, []);
+          await bridge.prompt(activeId, text, bindingOf(activeCard, activePreset));
         } catch (error) {
           log(`发送失败：${error?.code || error?.message || error}`);
         } finally { setBusy(false); }
-      }, [draft, activeId, busy, bridge, log]);
+      }, [draft, activeId, busy, bridge, log, bindingOf, activeCard, activePreset]);
 
       const importFiles = useCallback(async (event) => {
         const files = Array.from(event.target.files || []);
