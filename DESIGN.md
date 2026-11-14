@@ -911,6 +911,40 @@ D-007（聊天面留在 `conversation.view`）与 D-011（预设只管"零工具
 | **b1 嵌 ST 本体** | 插件内跑一份 SillyTavern 前端（iframe），JS-Slash-Runner 装进那个 ST，DSH 只做外壳与模型桥 | 等于打包 ST（AGPL、双 UI、模型与设置全要桥接）；但"原样运行"最彻底 |
 | **b2 ST API 仿真层** | 实现 JS-Slash-Runner 依赖的 ST 全局与 DOM 子集（jQuery、`eventSource`/`event_types`、`SillyTavern.getContext()`、聊天 DOM），让扩展以它自己的形式加载 | 工作量取决于它触碰多少 ST 内部；可增量验证（先加载，再补 API） |
 
+## 17. 第 2–3 轮答复与 MVU 实测（2026-11-14）
+
+### 17.1 已落定的决策草案
+
+| 编号 | 决策 | 内容 |
+|---|---|---|
+| D-012（草案） | 取代 D-007 | **C′：会话作载体**。每局 = 一个 DSH 会话（存储 + 回放）；生成走 agent loop；插件在 `agent/pre-step` 用 ST 语义重建 messages；面板渲染该会话事件。插件不备份聊天内容。 |
+| D-013（草案） | 取代 D-004 的"不做 ST 扩展"部分 | **b2：ST API 仿真层**。不复刻 ST 全前端，只实现 JS-Slash-Runner 实际依赖的那部分 ST 全局与 DOM；扩展以它自己的形式加载运行。插件 UI 内有**扩展管理子菜单**（安装/更新/卸载）。 |
+| D-014（草案） | TH 验收线 | 三档递进：(a) 扩展能加载并能打开它自己的面板 → (b) 能跑通最小脚本（读写变量） → (c) **跑通 MVU**；同时支持导入/管理多套预设的预设列表。 |
+
+### 17.2 MVU 实测：它到底用了哪些 ST API
+
+把卡里 `import` 的 MVU bundle（`testingcf.jsdelivr.net/gh/MagicalAstrogy/MagVarUpdate/artifact/bundle.js`，611,598 字节）拉下来做了调用面统计：
+
+| 类别 | 实际用到 | 次数 |
+|---|---|---|
+| `SillyTavern.*`（上下文） | `chat`(27)、`callGenericPopup`(17)、`POPUP_TYPE`(17)、`POPUP_RESULT`(14)、`getCurrentChatId`(13)、`getRequestHeaders`(5)、`saveChat`(5)、`chatCompletionSettings`(3)、`extensionSettings`(3)、`getCharacterCardFields`(2)、`ToolManager`(2)、`unregisterFunctionTool`(2)、`characters`(1)、`chatMetadata`(1)、`characterId`(1)、`saveSettingsDebounced`(1)、`loadWorldInfo`(1)、`registerMacro`(1)、`unregisterMacro`(1)、`getChatCompletionModel`(1)、`getCurrentLocale`(1)、`name2`(1) | ~120 |
+| TH 裸全局 | `getVariables`(11)、`getChatMessages`(9)、`setChatMessages`(7)、`substitudeMacros`(7)、`eventOn`(4)、`eventEmit`(21)、`getTavernHelperVersion`(2) | ~60 |
+| UI 依赖 | `toastr.*`（103）、`$(`（9，jQuery-lite） | 112 |
+| 打包内建 | `YAML.stringify`（随 bundle 打包，不需我们提供） | — |
+
+**结论**：MVU 的兼容面是**可枚举、有边界**的——约 24 个上下文成员 + 7 个 TH 全局 + toastr + 极少量 jQuery。这让 b2 从"猜工作量"变成"按清单实现"。
+
+⚠️ 仍需实测：这些 `SillyTavern.*` 是从 `getContext()` 解构出来的（bundle 里没有直接 `getContext` 字样，说明被压缩/别名化了）。b2 的具体形状要在 spike 里按实际报错补。
+
+### 17.3 由此确定的首版 TH 范围
+
+1. `toastr` 全套最小实现（error/success/warning/info + title）；
+2. `$()` 的 9 处用法所需子集（通常是选择器 + text/html/on/val）；
+3. `SillyTavern` 上下文对象（上表 24 个成员）；
+4. TH 裸全局 7 个 + `setVariables`/`insertOrAssignVariables`（脚本常用，虽未被 MVU 直接调用）；
+5. `callGenericPopup` + `POPUP_TYPE`/`POPUP_RESULT`（MVU 用它做确认框）；
+6. `getRequestHeaders`（MVU 用它调"额外模型"）——需要桥接到 DSH 的 provider 凭据，**不能直接把 key 交给脚本**，用 Host 侧代发。
+
 ---
 
 ## 附录 A：事实出处（当前安装）
