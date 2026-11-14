@@ -21,6 +21,7 @@
 | npm / npx | 不存在于 PATH |
 | 读 ASAR 工具 | `tmp/asarls.ps1`（列目录/读文件）、`tmp/asargrep.ps1`（按正则搜包内源码） |
 | 验证用 CLI | `tmp/dsh.ps1 -CliArgs "..."`（`ELECTRON_RUN_AS_NODE=1` 跑 `lib/bin.js`；注意它会缓冲输出到退出才打印） |
+| GitHub 远程 | `https://github.com/eojnus/dsh-tt`（public，无 description；`参考/`、`assets/*`、`tmp/`、`build/` 未上传，仅保留 `assets/README.md`） |
 
 ---
 
