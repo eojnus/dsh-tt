@@ -1,0 +1,13 @@
+# ST 资产生存区（个人创作内容，不进版本库）
+assets/*
+!assets/README.md
+参考/
+
+# 调研脚手架与本地产物
+tmp/
+build/
+node_modules/
+dist/
+*.log
+*.zip
+.DS_Store

@@ -1,0 +1,254 @@
+﻿// 角色扮演工作台（Client）。构建时由 tools/build-client.mjs 把 SNAPSHOT 注入。
+window.__ModuleLoader__.load({
+  id: '@dsh-tt/roleplay',
+  factory(require) {
+    const React = require('react');
+    const h = React.createElement;
+    const { useState, useMemo, useCallback } = React;
+    const SNAPSHOT = __SNAPSHOT__;
+
+    const styles = {
+      root: {
+        height: '100%',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '18px',
+        padding: '28px 32px 24px',
+        color: 'var(--dsw-alias-text-primary, #e6e6e6)',
+        background: 'var(--dsw-alias-background-primary, #141414)',
+        overflow: 'hidden',
+        boxSizing: 'border-box',
+      },
+      header: { display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: '24px', flexWrap: 'wrap' },
+      titleBlock: { display: 'flex', flexDirection: 'column', gap: '6px' },
+      title: { margin: 0, fontSize: '22px', fontWeight: 600, letterSpacing: '-0.01em', lineHeight: 1.2 },
+      subtitle: { margin: 0, fontSize: '13px', lineHeight: 1.5, color: 'var(--dsw-alias-text-secondary, #9a9a9a)', maxWidth: '62ch' },
+      chips: { display: 'flex', gap: '8px', flexWrap: 'wrap' },
+      chip: {
+        display: 'inline-flex', alignItems: 'center', gap: '6px',
+        padding: '4px 10px', borderRadius: '999px',
+        border: '1px solid var(--dsw-alias-border-secondary, #333)',
+        background: 'var(--dsw-alias-background-secondary, #1b1b1b)',
+        fontSize: '12px', lineHeight: 1.4, color: 'var(--dsw-alias-text-secondary, #a8a8a8)',
+      },
+      chipStrong: { color: 'var(--dsw-alias-text-primary, #ededed)', fontWeight: 600 },
+      body: { display: 'flex', gap: '20px', minHeight: 0, flex: 1 },
+      list: { width: '296px', flexShrink: 0, display: 'flex', flexDirection: 'column', gap: '8px', overflowY: 'auto', paddingRight: '4px' },
+      card: {
+        display: 'flex', gap: '12px', alignItems: 'center', textAlign: 'left',
+        padding: '12px', borderRadius: '10px', cursor: 'pointer',
+        border: '1px solid var(--dsw-alias-border-secondary, #2c2c2c)',
+        background: 'var(--dsw-alias-background-secondary, #1a1a1a)',
+        color: 'inherit', font: 'inherit',
+        transition: 'transform 160ms cubic-bezier(0.23, 1, 0.32, 1), border-color 160ms ease, background 160ms ease',
+      },
+      cardActive: {
+        borderColor: 'var(--dsw-alias-border-accent, #6b8afd)',
+        background: 'var(--dsw-alias-background-elevated, #202020)',
+      },
+      avatar: {
+        width: '40px', height: '40px', flexShrink: 0, borderRadius: '999px',
+        display: 'grid', placeItems: 'center',
+        fontSize: '16px', fontWeight: 600,
+        color: 'var(--dsw-alias-text-primary, #f2f2f2)',
+        background: 'linear-gradient(160deg, rgba(107,138,253,0.35), rgba(107,138,253,0.08))',
+        border: '1px solid rgba(107,138,253,0.45)',
+      },
+      cardName: { fontSize: '13.5px', fontWeight: 600, lineHeight: 1.3, wordBreak: 'break-word' },
+      cardMeta: { fontSize: '11.5px', color: 'var(--dsw-alias-text-tertiary, #8a8a8a)', marginTop: '2px' },
+      detail: {
+        flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: '16px',
+        padding: '20px', borderRadius: '12px', overflow: 'hidden',
+        border: '1px solid var(--dsw-alias-border-secondary, #2c2c2c)',
+        background: 'var(--dsw-alias-background-secondary, #1a1a1a)',
+      },
+      detailHead: { display: 'flex', alignItems: 'center', gap: '14px' },
+      detailTitle: { margin: 0, fontSize: '17px', fontWeight: 600 },
+      tagRow: { display: 'flex', gap: '6px', flexWrap: 'wrap' },
+      tag: {
+        fontSize: '11px', padding: '2px 8px', borderRadius: '999px',
+        background: 'var(--dsw-alias-background-tertiary, #232323)',
+        border: '1px solid var(--dsw-alias-border-secondary, #303030)',
+        color: 'var(--dsw-alias-text-secondary, #a0a0a0)',
+      },
+      grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: '10px' },
+      stat: {
+        padding: '10px 12px', borderRadius: '8px',
+        border: '1px solid var(--dsw-alias-border-secondary, #2a2a2a)',
+        background: 'var(--dsw-alias-background-primary, #161616)',
+      },
+      statLabel: { fontSize: '11px', color: 'var(--dsw-alias-text-tertiary, #8a8a8a)', marginBottom: '4px' },
+      statValue: { fontSize: '15px', fontWeight: 600, fontVariantNumeric: 'tabular-nums' },
+      sectionTitle: { fontSize: '12px', fontWeight: 600, letterSpacing: '0.02em', color: 'var(--dsw-alias-text-secondary, #9a9a9a)' },
+      pre: {
+        margin: 0, padding: '12px 14px', borderRadius: '8px', overflow: 'auto', flex: 1, minHeight: '120px',
+        background: 'var(--dsw-alias-background-primary, #121212)',
+        border: '1px solid var(--dsw-alias-border-secondary, #262626)',
+        fontFamily: 'var(--dsw-font-family-mono, ui-monospace, SFMono-Regular, Consolas, monospace)',
+        fontSize: '11.5px', lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+        color: 'var(--dsw-alias-text-secondary, #b4b4b4)',
+      },
+      actions: { display: 'flex', gap: '8px', alignItems: 'center' },
+      button: {
+        padding: '7px 14px', borderRadius: '8px', cursor: 'pointer', font: 'inherit', fontSize: '12.5px',
+        border: '1px solid var(--dsw-alias-border-secondary, #333)',
+        background: 'var(--dsw-alias-background-tertiary, #232323)',
+        color: 'var(--dsw-alias-text-primary, #e8e8e8)',
+        transition: 'transform 140ms cubic-bezier(0.23, 1, 0.32, 1), background 140ms ease',
+      },
+      hint: { fontSize: '12px', color: 'var(--dsw-alias-text-tertiary, #8a8a8a)', lineHeight: 1.6 },
+      empty: { padding: '28px', textAlign: 'center', color: 'var(--dsw-alias-text-secondary, #9a9a9a)', fontSize: '13px' },
+    };
+
+    function Chip({ label, value, strong }) {
+      return h('span', { style: styles.chip },
+        h('span', null, label),
+        h('span', { style: strong ? styles.chipStrong : undefined }, String(value)),
+      );
+    }
+
+    function Stat({ label, value }) {
+      return h('div', { style: styles.stat },
+        h('div', { style: styles.statLabel }, label),
+        h('div', { style: styles.statValue }, String(value)),
+      );
+    }
+
+    function Panel() {
+      const cards = SNAPSHOT.cards || [];
+      const [activeId, setActiveId] = useState((SNAPSHOT.active && SNAPSHOT.active.cardId) || (cards[0] && cards[0].id));
+      const active = useMemo(() => cards.find((c) => c.id === activeId) || cards[0] || null, [activeId, cards]);
+      const [copied, setCopied] = useState(false);
+
+      const copySystem = useCallback(async () => {
+        try {
+          await navigator.clipboard.writeText(SNAPSHOT.active ? SNAPSHOT.active.systemPreview : '');
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1600);
+        } catch { /* 剪贴板不可用时忽略 */ }
+      }, []);
+
+      const counts = SNAPSHOT.counts || { cards: 0, presets: 0, lorebooks: 0, errors: 0 };
+      const wi = SNAPSHOT.active ? SNAPSHOT.active.worldInfo : null;
+
+      return h('div', { style: styles.root },
+        h('style', null,
+          '.dsh-tt-btn:focus-visible{outline:2px solid var(--dsw-alias-border-accent,#6b8afd);outline-offset:2px}' +
+          '@media (prefers-reduced-motion: reduce){.dsh-tt-btn{transition:none !important}}',
+        ),
+        h('header', { style: styles.header },
+          h('div', { style: styles.titleBlock },
+            h('h1', { style: styles.title }, '角色扮演'),
+            h('p', { style: styles.subtitle },
+              '用 SillyTavern 的角色卡、预设与世界书开一场戏。这里显示的是本机已解析的资产；真正的对话在会话界面里进行。'),
+          ),
+          h('div', { style: styles.chips },
+            h(Chip, { label: '角色', value: counts.cards, strong: true }),
+            h(Chip, { label: '预设', value: counts.presets, strong: true }),
+            h(Chip, { label: '世界书', value: counts.lorebooks }),
+            counts.errors > 0 ? h(Chip, { label: '解析失败', value: counts.errors }) : null,
+          ),
+        ),
+        h('div', { style: styles.body },
+          h('div', { style: styles.list },
+            cards.length === 0
+              ? h('div', { style: styles.empty }, '还没有角色卡。把 PNG 卡放进 assets/characters 或 参考/ 目录后重新构建。')
+              : cards.map((card) => h('button', {
+                key: card.id,
+                type: 'button',
+                className: 'dsh-tt-btn',
+                onClick: () => setActiveId(card.id),
+                style: card.id === (active && active.id) ? { ...styles.card, ...styles.cardActive } : styles.card,
+                onMouseDown: (e) => { e.currentTarget.style.transform = 'scale(0.985)'; },
+                onMouseUp: (e) => { e.currentTarget.style.transform = ''; },
+                onMouseLeave: (e) => { e.currentTarget.style.transform = ''; },
+              },
+                h('div', { style: styles.avatar }, String(card.name || '?').slice(0, 1)),
+                h('div', { style: { minWidth: 0 } },
+                  h('div', { style: styles.cardName }, card.name),
+                  h('div', { style: styles.cardMeta }, `${card.spec} · ${card.counts.lorebookEntries} 条世界书`),
+                ),
+              )),
+          ),
+          h('section', { style: styles.detail },
+            active
+              ? [
+                h('div', { style: styles.detailHead, key: 'head' },
+                  h('div', { style: styles.avatar }, String(active.name || '?').slice(0, 1)),
+                  h('div', { style: { minWidth: 0 } },
+                    h('h2', { style: styles.detailTitle }, active.name),
+                    h('div', { style: styles.cardMeta }, [active.creator, active.version].filter(Boolean).join(' · ') || active.spec),
+                  ),
+                ),
+                active.tags && active.tags.length
+                  ? h('div', { style: styles.tagRow, key: 'tags' }, active.tags.map((tag) => h('span', { key: tag, style: styles.tag }, tag)))
+                  : null,
+                h('div', { style: styles.grid, key: 'stats' },
+                  h(Stat, { label: '世界书条目', value: active.counts.lorebookEntries }),
+                  h(Stat, { label: '世界书字数', value: active.counts.lorebookChars.toLocaleString() }),
+                  h(Stat, { label: '酒馆助手脚本', value: `${active.counts.thScriptsEnabled}/${active.counts.thScripts}` }),
+                  h(Stat, { label: '正则脚本', value: active.counts.regexScripts }),
+                  h(Stat, { label: '备选问候', value: active.counts.greetings }),
+                  h(Stat, { label: '首条消息', value: `${active.counts.firstMes} 字` }),
+                ),
+                wi ? h('div', { key: 'wi' },
+                  h('div', { style: { ...styles.sectionTitle, marginBottom: '8px' } },
+                    `世界书激活 ${wi.activated}/${wi.total} 条 · ${wi.tokens}/${wi.budget} tokens · 常量 ${wi.constants}`),
+                  wi.skipped && wi.skipped.length
+                    ? h('div', { style: styles.hint },
+                      '被预算挤掉的条目：' + wi.skipped.slice(0, 6).map((s) => (s.comment || `#${s.uid}`)).join('、'))
+                    : null,
+                ) : null,
+                h('div', { key: 'pre-wrap', style: { display: 'flex', flexDirection: 'column', gap: '8px', minHeight: 0, flex: 1 } },
+                  h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
+                    h('div', { style: styles.sectionTitle }, `系统提示词预览 · ${SNAPSHOT.active ? SNAPSHOT.active.systemLength.toLocaleString() : 0} 字`),
+                    h('div', { style: styles.actions },
+                      h('button', {
+                        type: 'button', className: 'dsh-tt-btn', style: styles.button, onClick: copySystem,
+                        onMouseDown: (e) => { e.currentTarget.style.transform = 'scale(0.97)'; },
+                        onMouseUp: (e) => { e.currentTarget.style.transform = ''; },
+                        onMouseLeave: (e) => { e.currentTarget.style.transform = ''; },
+                      }, copied ? '已复制' : '复制预览'),
+                    ),
+                  ),
+                  h('pre', { style: styles.pre }, SNAPSHOT.active ? SNAPSHOT.active.systemPreview : '（没有可预览的系统提示词）'),
+                ),
+              ]
+              : h('div', { style: styles.empty }, '选择左侧的角色卡查看详情。'),
+          ),
+        ),
+        h('div', { style: styles.hint },
+          '下一步：新建会话时选择「角色扮演」预设。该预设不含任何工具，系统提示词由本插件接管。'),
+      );
+    }
+
+    function PanelIcon({ size }) {
+      const px = size || 16;
+      return h('svg', {
+        width: px, height: px, viewBox: '0 0 24 24', fill: 'none',
+        stroke: 'currentColor', strokeWidth: 1.7, strokeLinecap: 'round', strokeLinejoin: 'round',
+        'aria-hidden': true, style: { display: 'block' },
+      },
+        h('path', { d: 'M4 5.5h16v10a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3z' }),
+        h('path', { d: 'M8 9.5h8M8 13h5' }),
+        h('path', { d: 'M12 18.5V21' }),
+      );
+    }
+
+    return {
+      inject: ['slots'],
+      apply(ctx) {
+        try {
+          ctx.slots.inject('main', () => ctx.slots.register({ name: 'main', key: 'roleplay' }, Panel));
+          ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
+            name: 'sidebar.panellist', id: 'roleplay', order: 20, label: () => '角色扮演',
+          }, PanelIcon));
+          console.info('[dsh-tt] client module loaded: sidebar + main panel registered');
+        } catch (error) {
+          console.error('[dsh-tt] client activation failed', error);
+          throw error;
+        }
+      },
+    };
+  },
+});

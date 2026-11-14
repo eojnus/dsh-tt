@@ -1,0 +1,26 @@
+# 角色扮演插件
+#
+# 关键：客户端模块（侧栏入口 + 面板）是按「已启用的 Loader 条目」组合的，
+# 所以插件必须在**根层**插入一行；只放在预设里的话，浏览器侧永远发现不了它。
+#
+# tt-roleplay       根层：提供客户端模块（takeover=false，不改任何会话的提示词）
+# preset-roleplay   「角色扮演」模式：零工具，插件在 agent 作用域内接管系统提示词
+- insert:
+    - id: tt-roleplay
+      name: '@dsh-tt/roleplay'
+      config:
+        assetsDir: 'X:\dsh-tt'
+        takeover: false
+    - id: preset-roleplay
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: roleplay
+        name: 角色扮演
+        description: 只聊天。没有工具、没有工作区上下文，提示词由角色扮演插件接管。
+        order: 20
+        plugins:
+          - id: tt-roleplay-agent
+            name: '@dsh-tt/roleplay'
+            config:
+              assetsDir: 'X:\dsh-tt'
+              takeover: true
