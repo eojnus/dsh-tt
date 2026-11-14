@@ -2,6 +2,7 @@
 // v1 只拼 system 与 tail（post_history_instructions）；对话历史由 DSH 会话提供。
 
 import { substitute } from './macros.js';
+import { renderEjs } from './ejs.js';
 
 /** ST 的内置 marker（位置占位符，不产出文本）。 */
 export const MARKERS = new Set([
@@ -55,11 +56,14 @@ function markerContent(marker, { card, lorebook, env, persona, preset }) {
  * ST 语义：injection_position = 0（相对 system）/ 1（绝对注入，按 injection_depth 插进对话）。
  * @returns {{ system: string, tail: string, depth: {role:string, content:string}[], injected: {role:string, content:string, depth:number}[] }}
  */
-export function renderPrompt({ card, preset, lorebook, persona, env, macroOptions }) {
+export function renderPrompt({ card, preset, lorebook, persona, env, macroOptions, ejsScope = {} }) {
   const parts = [];
   const injected = [];
+  // ① EJS → ② ST 宏（顺序与 ST-Prompt-Template 一致）
+  const render = (text) => substitute(renderEjs(String(text ?? ''), ejsScope), env, macroOptions);
+
   const push = (text) => {
-    const value = substitute(String(text ?? ''), env, macroOptions).trim();
+    const value = render(text).trim();
     if (value) parts.push(value);
   };
 
@@ -107,16 +111,16 @@ export function renderPrompt({ card, preset, lorebook, persona, env, macroOption
   for (const item of lorebook?.buckets?.ANTop ?? []) tailParts.push(item);
   for (const item of lorebook?.buckets?.ANBottom ?? []) tailParts.push(item);
   if (card?.postHistoryInstructions) tailParts.push(card.postHistoryInstructions);
-  const tail = substitute(tailParts.join('\n\n'), env, macroOptions).trim();
+  const tail = render(tailParts.join('\n\n')).trim();
 
   const depth = [];
   for (const group of lorebook?.buckets?.depth ?? []) {
     for (const content of group.entries) {
-      depth.push({ role: group.role || 'system', content: substitute(content, env, macroOptions) });
+      depth.push({ role: group.role || 'system', content: render(content) });
     }
   }
   if (card?.depthPrompt?.depth) {
-    depth.push({ role: card.depthPrompt.role || 'system', content: substitute(card.depthPrompt.prompt, env, macroOptions) });
+    depth.push({ role: card.depthPrompt.role || 'system', content: render(card.depthPrompt.prompt) });
   }
 
   return { system, tail, depth, injected };

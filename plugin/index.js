@@ -10,6 +10,7 @@ import { loadLibrary, bookEntriesOf, resolveActive } from './lib/library.js';
 import { activateEntries } from './lib/lorebook.js';
 import { renderPrompt } from './lib/prompt.js';
 import { createMacroEnv } from './lib/macros.js';
+import { createEjsScope } from './lib/ejs.js';
 
 export const name = 'dsh-tt-roleplay';
 
@@ -60,6 +61,8 @@ export function apply(ctx, config = {}) {
     preset: null,
     systemText: '',
     disposeSection: null,
+    variables: {},
+    depth: [],
   };
 
   function render(card, preset) {
@@ -71,7 +74,13 @@ export function apply(ctx, config = {}) {
       maxPrompt: config.maxPrompt,
       maxContext,
     });
-    const rendered = renderPrompt({ card, preset, lorebook, env });
+    const lorebookByName = new Map((lorebook.activated || []).map((e) => [e.comment, e.content]));
+    const scope = createEjsScope(state.variables, {
+      getwi: (name) => lorebookByName.get(name) ?? '',
+      getchar: () => card?.name ?? '',
+      resolve: (name) => (env && name in env ? env[name] : undefined),
+    });
+    const rendered = renderPrompt({ card, preset, lorebook, env, ejsScope: scope });
     state.systemText = [rendered.system, rendered.tail].filter(Boolean).join('\n\n');
     state.depth = [...(rendered.depth ?? []), ...(rendered.injected ?? [])];
     log(
