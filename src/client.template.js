@@ -974,7 +974,8 @@ window.__ModuleLoader__.load({
           })).filter((row) => row.id);
           normalized.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
           setSessions(normalized);
-          setActiveId((current) => current ?? normalized[0]?.id ?? null);
+          // 默认只自动选中 RP · 开头的局；普通会话留给用户在列表里显式打开（只读）。
+          setActiveId((current) => current ?? normalized.find((session) => session.title.startsWith(RP_PREFIX))?.id ?? null);
         } catch (error) {
           log(`会话列表读取失败：${error?.code || error?.message || error}`);
         }
@@ -1055,6 +1056,7 @@ window.__ModuleLoader__.load({
 
       const activeCard = store.cards.find((card) => card.id === store.activeCardId) || null;
       const activePreset = store.presets.find((preset) => preset.id === store.activePresetId) || null;
+      const activeSession = sessions.find((session) => session.id === activeId) || null;
 
       const activeCardRaw = useMemo(() => {
         if (!activeCard) return null;
@@ -1079,6 +1081,7 @@ window.__ModuleLoader__.load({
       // ── 会话元数据 ─────────────────────────────────────────────
       const sessionMeta = activeId ? (store.sessionMeta[activeId] || null) : null;
       const greeting = sessionMeta?.greeting || '';
+      const isRoleplaySession = Boolean(sessionMeta) || Boolean(activeSession?.title?.startsWith(RP_PREFIX));
 
       const inferMetaFromTitle = useCallback((title) => {
         if (!title || !title.startsWith(RP_PREFIX)) return null;
@@ -1164,13 +1167,14 @@ window.__ModuleLoader__.load({
         activeCard?.id || '',
         activeCardRaw ? 'raw' : 'noraw',
         greeting ? 'greet' : 'nogreet',
+        isRoleplaySession ? 'rp' : 'plain',
         scriptSignature,
         thReload,
       ].join('|');
 
       useEffect(() => {
         const container = thFrameRef.current;
-        if (!container || !bridge?.ok || !activeId || !activeCard || !activeCardRaw) {
+        if (!container || !bridge?.ok || !activeId || !isRoleplaySession || !activeCard || !activeCardRaw) {
           setThReady(false);
           return undefined;
         }
@@ -1375,6 +1379,10 @@ window.__ModuleLoader__.load({
       const send = useCallback(async () => {
         const text = draft.trim();
         if (!text || !activeId || busy) return;
+        if (!isRoleplaySession) {
+          setNotice('这不是角色扮演会话：信封会被写进普通会话的日志。请点「新建对话」创建一局，或切换到 RP · 开头的会话。');
+          return;
+        }
         setBusy(true);
         setDraft('');
         setFloors((prev) => [...prev, { id: `local-${Date.now()}`, role: 'user', text, seq: -1, time: Date.now() }]);
@@ -1384,7 +1392,7 @@ window.__ModuleLoader__.load({
           log(`发送失败：${error?.code || error?.message || error}`);
           pushToast('error', String(error?.message || error), '发送失败');
         } finally { setBusy(false); }
-      }, [draft, activeId, busy, bridge, buildBinding, log, pushToast]);
+      }, [draft, activeId, busy, bridge, buildBinding, log, pushToast, isRoleplaySession]);
 
       // ── 导入 / 导出 ───────────────────────────────────────────
       const importFiles = useCallback(async (event) => {
@@ -1538,13 +1546,16 @@ window.__ModuleLoader__.load({
                 h('div', { className: 'tt-note' }, '开场白只显示不发送；你的第一条消息会连同开场白一起进入模型上下文。'))
               : renderFloors()),
           notice ? h('div', { style: { margin: '0 22px 6px', padding: '8px 12px', borderRadius: 8, fontSize: 12, lineHeight: 1.6, background: 'rgba(255,59,48,.10)', color: 'var(--dsw-alias-text-primary, inherit)' } }, notice) : null,
+          activeId && !isRoleplaySession
+            ? h('div', { className: 'tt-note', style: { margin: '0 22px 6px' } }, '这是普通 DSH 会话：只读。点「新建对话」创建角色扮演局后再发送。')
+            : null,
           h('div', { className: 'tt-comp' },
             h('div', { className: 'tt-box' },
               h('textarea', {
                 className: 'tt-ta',
                 ref: chatRef,
                 value: draft,
-                placeholder: '写点什么…（Enter 发送，Shift+Enter 换行）',
+                placeholder: isRoleplaySession ? '写点什么…（Enter 发送，Shift+Enter 换行）' : '先新建一局角色扮演对话…',
                 onChange: (e) => setDraft(e.target.value),
                 onKeyDown: (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } },
               }),
@@ -1553,7 +1564,7 @@ window.__ModuleLoader__.load({
                 h('button', { className: 'tt-ic', title: '语音输入（占位）', onClick: () => log('语音输入待接通') }, '🎙'),
                 h('div', { className: 'tt-spacer' }),
                 thReady ? h('span', { className: 'tt-note', title: '酒馆助手脚本已运行' }, 'TH ✓') : null,
-                h('button', { className: 'tt-send', disabled: busy || !draft.trim() || !activeId, onClick: send }, busy ? '生成中…' : '发送'),
+                h('button', { className: 'tt-send', disabled: busy || !draft.trim() || !activeId || !isRoleplaySession, onClick: send }, busy ? '生成中…' : '发送'),
               ),
             ),
           ))
