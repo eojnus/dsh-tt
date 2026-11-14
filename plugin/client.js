@@ -957,8 +957,8 @@ window.__ModuleLoader__.load({
 
       const pane = view === 'cards' ? cardsPane : view === 'presets' ? presetsPane : view === 'extensions' ? extPane : view === 'settings' ? settingsPane : chatPane;
 
-      return h('div', { className: 'tt-root' },
-        h('style', null, CSS),
+      return h('div', { className: 'tt-root', style: { minHeight: 0 } },
+        h('style', { dangerouslySetInnerHTML: { __html: CSS } }),
         h('div', { className: 'tt-top' },
           h('div', { className: 'tt-brand' }, '角色扮演'),
           h('div', { className: 'tt-spacer' }),
@@ -1045,7 +1045,8 @@ window.__ModuleLoader__.load({
         try {
           ctx.slots.inject('main', () => ctx.slots.register(
             { name: 'main', key: 'roleplay' },
-            () => h(Boundary, null, h(Panel, { __ctx: ctx })),
+            () => h('div', { style: { height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column' } },
+              h(Boundary, null, h(Panel, { __ctx: ctx }))),
           ));
           ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
             name: 'sidebar.panellist', id: 'roleplay', order: 20, label: () => '角色扮演',
