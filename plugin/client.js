@@ -534,6 +534,10 @@ window.__ModuleLoader__.load({
         throw last;
       }
 
+      const rid = () => (globalThis.crypto?.randomUUID
+        ? globalThis.crypto.randomUUID()
+        : 'tt-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8));
+
       return {
         ok,
         async list() {
@@ -544,30 +548,37 @@ window.__ModuleLoader__.load({
           if (Array.isArray(r)) return r;
           return r?.sessions ?? r?.rows ?? r?.items ?? [];
         },
-        async create(title, presetId) {
-          const payloads = [
-            { agentPreset: presetId, title },
-            { preset: presetId, title },
-            { title },
-          ];
-          return attempt('session.create', payloads.map((p) => () => session.create(p)));
+        // SessionCreateRequest: { workspaceId?, cwd?, sessionId?, agentPreset? }（title 不在其中）
+        async create(presetId) {
+          return attempt('session.create', [
+            () => session.create({ agentPreset: presetId, cwd: STORE_ROOT }),
+            () => session.create({ agentPreset: presetId }),
+            () => session.create({}),
+          ]);
         },
-        async prompt(sessionId, text, attachments) {
-          const content = [{ type: 'text', text }];
-          const bodies = [
-            { sessionId, content },
-            { sessionId, content, mode: 'queue' },
-            { address: { sessionId }, content },
-          ];
-          return attempt('session.prompt', bodies.map((b) => () => session.prompt(b)));
+        // 标题走 session/rename
+        async rename(sessionId, title) {
+          try { return await session.rename({ sessionId, title }); }
+          catch (error) { log('重命名失败：' + (error && (error.code || error.message) || error)); return null; }
         },
+        // SessionPromptRequest: 必填 requestId / sessionId / mode / content[]
+        async prompt(sessionId, text) {
+          const body = {
+            requestId: rid(),
+            sessionId,
+            mode: 'queue',
+            content: [{ type: 'text', text }],
+            clientTimeZone: (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { return undefined; } })(),
+          };
+          return attempt('session.prompt', [() => session.prompt(body)]);
+        },
+        // SessionPageRequest: { address: { kind: 'session', sessionId }, ... }
         async events(sessionId, throughSeq) {
           const r = await attempt('session.events', [
-            () => session.events({ sessionId, throughSeq }),
-            () => session.events({ address: { sessionId }, throughSeq }),
-            () => session.events({ sessionId, address: { sessionId } }),
+            () => session.events({ address: { kind: 'session', sessionId }, throughSeq, maxMessages: 200 }),
+            () => session.events({ address: { kind: 'session', sessionId }, maxMessages: 200 }),
           ]);
-          return r?.records ?? r?.events ?? r ?? [];
+          return r?.records ?? [];
         },
         async models() {
           const call = () => session.modelCatalog
@@ -735,6 +746,7 @@ window.__ModuleLoader__.load({
       const [draft, setDraft] = useState('');
       const [busy, setBusy] = useState(false);
       const [diag, setDiag] = useState([]);
+      const [notice, setNotice] = useState('');
       const [models, setModels] = useState([]);
       const chatRef = useRef(null);
       const scrollRef = useRef(null);
@@ -814,14 +826,16 @@ window.__ModuleLoader__.load({
 
       const startChat = useCallback(async (card) => {
         if (!card) return;
-        if (!bridge?.ok) { log('会话通道不可用，无法开局'); return; }
+        if (!bridge?.ok) { setNotice('会话通道不可用：请重启应用后重试'); return; }
+        setNotice('');
         patchStore({ activeCardId: card.id });
         const stamp = new Date().toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
         const title = RP_PREFIX + card.name + ' · ' + stamp;
         setBusy(true);
         try {
-          const created = await bridge.create(title, 'roleplay');
-          const id = created?.sessionId ?? created?.id ?? created?.address?.sessionId ?? created?.session?.sessionId ?? created?.value?.sessionId ?? null;
+          const created = await bridge.create('roleplay');
+          if (created && created.sessionId) await bridge.rename(created.sessionId, title);
+          const id = created?.sessionId ?? created?.id ?? created?.address?.sessionId ?? null;
           if (!id) { log('已创建会话但没拿到 id：' + JSON.stringify(created).slice(0, 240)); return; }
           setActiveId(id);
           setView('chat');
@@ -837,7 +851,9 @@ window.__ModuleLoader__.load({
           }
           await refreshSessions();
         } catch (error) {
-          log('开始对话失败：' + (error && (error.code || error.message) || error));
+          const message = '开局失败：' + (error && (error.code || error.message) || error);
+          log(message);
+          setNotice(message);
         } finally { setBusy(false); }
       }, [bridge, patchStore, rawOf, refreshSessions, log]);
 
@@ -971,6 +987,7 @@ window.__ModuleLoader__.load({
                 h('div', null, activeCard ? `正在与「${activeCard.name}」对话` : '先在「角色」里选一张卡'),
                 h('div', { className: 'tt-note' }, '把开场白或任何剧情推进写进下面的输入框。'))
               : renderFloors()),
+          notice ? h('div', { style: { margin: '0 22px 6px', padding: '8px 12px', borderRadius: 8, fontSize: 12, lineHeight: 1.6, background: 'rgba(255,59,48,.10)', color: 'var(--dsw-alias-text-primary, inherit)' } }, notice) : null,
           h('div', { className: 'tt-comp' },
             h('div', { className: 'tt-box' },
               h('textarea', {
@@ -1037,9 +1054,16 @@ window.__ModuleLoader__.load({
           h('button', { className: 'tt-btn', onClick: () => log('扩展下载器待接通（GitHub tree → 本地缓存）') }, '安装最新版'),
           h('button', { className: 'tt-btn', onClick: () => log('扩展运行器待接通') }, '启动'),
         ),
-        Object.keys(store.extensions || {}).length === 0
-          ? h('div', { className: 'tt-note' }, '尚未安装扩展。')
-          : h('div', { className: 'tt-diag' }, JSON.stringify(store.extensions, null, 2)),
+        h('div', { className: 'tt-grid' },
+          BUILTIN_EXTENSIONS.map((ext) => h('div', { key: ext.id, className: 'tt-card on' },
+            h('b', null, ext.name),
+            h('small', null, ext.description),
+            h('small', { style: { marginTop: '6px' } },
+              ext.id === 'js-slash-runner'
+                ? '内置 · 已启用（运行时：脚本宿主待接通）'
+                : '内置 · 已启用'),
+            h('small', null, ext.repo),
+          ))),
       );
 
       const settingsPane = h('div', { className: 'tt-pane' },
@@ -1092,6 +1116,17 @@ window.__ModuleLoader__.load({
         h('div', { className: 'tt-body' }, sidebar, h('div', { className: 'tt-main' }, pane)),
       );
     }
+
+    const STORE_ROOT = 'X:\\dsh-tt';
+
+    const BUILTIN_EXTENSIONS = [
+      {
+        id: 'js-slash-runner',
+        name: '酒馆助手（JS-Slash-Runner）',
+        repo: 'N0VI028/JS-Slash-Runner',
+        description: 'ST 扩展宿主：运行卡内脚本、变量与前端 UI。内置并在开局时启用。',
+      },
+    ];
 
     // 面板兜底：任何渲染异常都显示成可读的错误，而不是白屏。
     class Boundary extends React.Component {
