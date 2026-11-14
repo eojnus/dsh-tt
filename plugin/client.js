@@ -140,6 +140,9 @@ window.__ModuleLoader__.load({
   }
 };
 
+    // apply() 里绑定到 ctx.layout.selectPanel(null)，面板本身拿不到 ctx。
+    let goConversation = () => {};
+
     const styles = {
       root: {
         height: '100%',
@@ -230,6 +233,15 @@ window.__ModuleLoader__.load({
         transition: 'transform 140ms cubic-bezier(0.23, 1, 0.32, 1), background 140ms ease',
       },
       hint: { fontSize: '12px', color: 'var(--dsw-alias-text-tertiary, #8a8a8a)', lineHeight: 1.6 },
+      guide: {
+        display: 'flex', gap: '16px', alignItems: 'flex-start', justifyContent: 'space-between',
+        padding: '14px 16px', borderRadius: '10px',
+        border: '1px solid var(--dsw-alias-border-secondary, #2c2c2c)',
+        background: 'var(--dsw-alias-background-secondary, #1a1a1a)',
+      },
+      guideText: { minWidth: 0 },
+      guideTitle: { fontSize: '12px', fontWeight: 600, letterSpacing: '0.02em', color: 'var(--dsw-alias-text-secondary, #9a9a9a)', marginBottom: '6px' },
+      guideList: { margin: 0, paddingLeft: '18px', fontSize: '12.5px', lineHeight: 1.7, color: 'var(--dsw-alias-text-secondary, #a8a8a8)' },
       empty: { padding: '28px', textAlign: 'center', color: 'var(--dsw-alias-text-secondary, #9a9a9a)', fontSize: '13px' },
     };
 
@@ -281,6 +293,23 @@ window.__ModuleLoader__.load({
             h(Chip, { label: '世界书', value: counts.lorebooks }),
             counts.errors > 0 ? h(Chip, { label: '解析失败', value: counts.errors }) : null,
           ),
+        ),
+        h('section', { style: styles.guide },
+          h('div', { style: styles.guideText },
+            h('div', { style: styles.guideTitle }, '怎么开始'),
+            h('ol', { style: styles.guideList },
+              h('li', null, '新建会话时，预设选「角色扮演」——它不带任何工具，只聊天。'),
+              h('li', null, '随便说一句开场。角色卡、预设与世界书会自动组装进系统提示词。'),
+              h('li', null, '想换角色就回这张工作台点一张卡；想换预设就再建一个会话。'),
+            ),
+          ),
+          h('button', {
+            type: 'button', className: 'dsh-tt-btn', style: styles.button,
+            onClick: () => goConversation(),
+            onMouseDown: (e) => { e.currentTarget.style.transform = 'scale(0.97)'; },
+            onMouseUp: (e) => { e.currentTarget.style.transform = ''; },
+            onMouseLeave: (e) => { e.currentTarget.style.transform = ''; },
+          }, '去会话界面'),
         ),
         h('div', { style: styles.body },
           h('div', { style: styles.list },
@@ -376,6 +405,10 @@ window.__ModuleLoader__.load({
           ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
             name: 'sidebar.panellist', id: 'roleplay', order: 20, label: () => '角色扮演',
           }, PanelIcon));
+          goConversation = () => {
+            try { ctx.layout.selectPanel(null); }
+            catch (error) { console.error('[dsh-tt] selectPanel(null) failed', error); }
+          };
           console.info('[dsh-tt] client module loaded: sidebar + main panel registered');
         } catch (error) {
           console.error('[dsh-tt] client activation failed', error);

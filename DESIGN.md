@@ -818,6 +818,21 @@ node tools/build-client.mjs
 
 回滚：把 `build/profile-backup/*.bak` 拷回 profile，并删除 `node_modules/@dsh-tt` 目录联接。
 
+### 15.7 使用路径（v1.1）
+
+1. 左侧栏「角色扮演」→ 工作台：确认卡、预设、世界书都被解析（右侧是世界书命中与系统提示词预览）。
+2. **新建会话**，在预设选择器里选「角色扮演」。该预设没有任何工具，只保留对话与模型。
+3. 直接说话。插件在 agent 作用域接管 system 段（`complete`），对话历史仍由 DSH 会话提供。
+4. 想换角色：回工作台换卡后新建会话（v1 的激活角色来自构建期快照 + 配置）。
+
+**v1.1 已知缺口**：开场白（`first_mes` / `alternate_greetings`）尚未自动插入成第一楼；需要在 `agent/created` 时把问候语注入会话（v1.2）。
+
+### 15.8 Git 基线（2026-11-14）
+
+- 本机原本没有 git，已安装 **MinGit 2.56.1** 到 `C:\Users\Administrator\.dsh\bin\mingit`（SHA256 与官方一致）。
+- 仓库在 `X:\dsh-tt`，主分支 `main`，基线提交 `0ec8add`（20 个文件）。
+- 排除：`参考/`、`assets/*`（保留 README）、`tmp/`、`build/`、`node_modules/`。
+
 ---
 
 ## 附录 A：事实出处（当前安装）
