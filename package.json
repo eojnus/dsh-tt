@@ -1,0 +1,16 @@
+{
+  "name": "dsh-tt",
+  "version": "0.3.0",
+  "private": true,
+  "type": "module",
+  "description": "DSH × SillyTavern 角色扮演插件（仓库根：构建、测试与安装脚本；插件本体在 plugin/）",
+  "scripts": {
+    "build": "node tools/snapshot.mjs && node tools/build-client.mjs",
+    "check": "node tools/check.mjs",
+    "test": "node tests/run.mjs",
+    "verify:e2e": "node tools/verify-e2e.mjs",
+    "install:profile": "node tools/install.mjs install",
+    "uninstall:profile": "node tools/install.mjs uninstall",
+    "status": "node tools/install.mjs status"
+  }
+}

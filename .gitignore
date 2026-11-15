@@ -11,3 +11,6 @@ dist/
 *.log
 *.zip
 .DS_Store
+
+# 测试临时目录（安装器测试用）
+tests/.tmp/

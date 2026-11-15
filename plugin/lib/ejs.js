@@ -625,18 +625,25 @@ function compileTemplate(source) {
 
   const segments = [];
   let index = 0;
-  let pendingTrimNext = false;
+  /** 'line' = `-%>`（吃掉紧跟的一个换行）；'all' = `_%>`（吃掉后面所有空白）。 */
+  let pendingTrim = null;
+  /** 见过至少一个 EJS 标记（即使它只产出文本，例如 `<%%`）。 */
+  let sawTag = false;
 
-  const pushText = (text, slurpBefore = false) => {
+  const pushText = (text) => {
     if (!text) return;
     let value = text;
-    if (slurpBefore) value = value.replace(/[ \t]*$/, '');
-    if (pendingTrimNext) {
-      value = value.replace(/^[ \t]*\r?\n/, '');
-      pendingTrimNext = false;
-    }
+    if (pendingTrim === 'line') value = value.replace(/^[ \t]*\r?\n/, '');
+    else if (pendingTrim === 'all') value = value.replace(/^\s+/, '');
+    pendingTrim = null;
     if (!value) return;
     segments.push({ type: 'text', value });
+  };
+
+  /** `<%_`：吃掉标签前面的所有空白（含换行）。 */
+  const slurpTrailing = () => {
+    const last = segments[segments.length - 1];
+    if (last?.type === 'text') last.value = last.value.replace(/\s+$/, '');
   };
 
   while (index < source.length) {
@@ -645,6 +652,7 @@ function compileTemplate(source) {
       pushText(source.slice(index));
       break;
     }
+    sawTag = true;
     let cursor = open + 2;
     pushText(source.slice(index, open));
 
@@ -666,10 +674,7 @@ function compileTemplate(source) {
     const close = source.indexOf('%>', cursor);
     if (close < 0) {
       // 未闭合：原样保留剩余文本（EJS 的行为是报错；这里选择不丢内容）
-      if (slurpBefore) {
-        const last = segments[segments.length - 1];
-        if (last?.type === 'text') last.value = last.value.replace(/[ \t]*$/, '');
-      }
+      if (slurpBefore) slurpTrailing();
       segments.push({ type: 'text', value: source.slice(open) });
       index = source.length;
       break;
@@ -677,14 +682,14 @@ function compileTemplate(source) {
 
     let code = source.slice(cursor, close);
     index = close + 2;
-    if (code.endsWith('-') || code.endsWith('_')) {
+    if (code.endsWith('-')) {
       code = code.slice(0, -1);
-      pendingTrimNext = true;
+      pendingTrim = 'line';
+    } else if (code.endsWith('_')) {
+      code = code.slice(0, -1);
+      pendingTrim = 'all';
     }
-    if (slurpBefore) {
-      const last = segments[segments.length - 1];
-      if (last?.type === 'text') last.value = last.value.replace(/[ \t]*$/, '');
-    }
+    if (slurpBefore) slurpTrailing();
 
     if (kind === '#') continue;
     if (kind === '=' || kind === '-') {
@@ -694,11 +699,7 @@ function compileTemplate(source) {
     }
   }
 
-  if (pendingTrimNext) {
-    // 行尾的 trim 标记后面没有内容，什么也不用做
-  }
-
-  if (!segments.some((segment) => segment.type !== 'text')) {
+  if (!sawTag) {
     TEMPLATE_CACHE.set(source, null);
     return null;
   }

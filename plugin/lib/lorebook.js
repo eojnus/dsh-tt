@@ -216,19 +216,42 @@ export function activateEntries({
   };
 }
 
-/** ST 的位置是数字；角色卡内嵌世界书用字符串，这里做一次映射。 */
+/** ST 的位置是数字；角色卡内嵌世界书用字符串，扩展里可能又放在 extensions 里。 */
 export function normalizeBookEntryPosition(entry) {
-  if (typeof entry?.position === 'number') return entry.position;
-  const map = { before_char: WI_POSITION.before, after_char: WI_POSITION.after };
+  if (typeof entry?.position === 'number' && Number.isFinite(entry.position)) return entry.position;
+  const extPosition = entry?.extensions?.position;
+  if (extPosition != null && Number.isFinite(Number(extPosition))) return Number(extPosition);
+  const map = {
+    before_char: WI_POSITION.before,
+    after_char: WI_POSITION.after,
+    before_an: WI_POSITION.ANTop,
+    after_an: WI_POSITION.ANBottom,
+    at_depth: WI_POSITION.atDepth,
+    before_em: WI_POSITION.EMTop,
+    after_em: WI_POSITION.EMBottom,
+    outlet: WI_POSITION.outlet,
+  };
   return map[entry?.position] ?? WI_POSITION.before;
 }
 
+const ROLE_NAMES = { 0: 'system', 1: 'user', 2: 'assistant' };
+function normalizeRole(entry) {
+  const raw = entry?.role ?? entry?.extensions?.role;
+  if (typeof raw === 'number') return ROLE_NAMES[raw] ?? 'system';
+  if (typeof raw === 'string' && raw) return raw;
+  return 'system';
+}
+
 export function normalizeCharacterBookEntries(book) {
-  const entries = Array.isArray(book?.entries) ? book.entries : [];
-  return entries.map((entry, index) => ({
+  // 角色卡内嵌世界书一般是数组；ST 导出的独立世界书是 { "0": {...}, "1": {...} } 的对象。
+  const raw = book?.entries;
+  const list = Array.isArray(raw) ? raw : (raw && typeof raw === 'object' ? Object.values(raw) : []);
+  return list.map((entry, index) => ({
     ...entry,
     uid: entry.id ?? entry.uid ?? index,
     position: normalizeBookEntryPosition(entry),
+    depth: entry.depth ?? entry.extensions?.depth,
+    role: normalizeRole(entry),
     enabled: entry.enabled !== false && entry.disable !== true,
     key: Array.isArray(entry.keys) ? entry.keys : (Array.isArray(entry.key) ? entry.key : []),
     keysecondary: Array.isArray(entry.secondary_keys) ? entry.secondary_keys

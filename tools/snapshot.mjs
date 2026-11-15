@@ -45,11 +45,20 @@ if (active) {
   const preset = library.presets[0]?.preset ?? null;
   const rendered = renderPrompt({ card, preset, lorebook, env, ejsScope });
   const systemText = [rendered.system, rendered.tail].filter(Boolean).join('\n\n');
+  // 模型实际看到的 system 段：agent.js 会把深度/绝对注入按深度降序追加在 system 末尾。
+  const depthText = [...rendered.injected, ...rendered.depth]
+    .sort((a, b) => (Number(b.depth) || 0) - (Number(a.depth) || 0))
+    .map((item) => item.content)
+    .join('\n\n');
+  const effective = [systemText, depthText].filter(Boolean).join('\n\n');
 
   activeSnapshot = {
     cardId: active.id,
     presetName: preset?.name ?? null,
     systemLength: systemText.length,
+    effectiveLength: effective.length,
+    depthGroups: rendered.depth.length,
+    injectedCount: rendered.injected.length,
     systemPreview: systemText.slice(0, 4000),
     truncated: systemText.length > 4000,
     worldInfo: {

@@ -5,11 +5,13 @@
 #
 # tt-roleplay       根层：提供客户端模块（takeover=false，不改任何会话的提示词）
 # preset-roleplay   「角色扮演」模式：零工具，插件在 agent 作用域内接管系统提示词
+#
+# 资产目录默认是插件目录的上一级（即仓库根）下的 参考/ 与 assets/；
+# 要指向别处就显式写 assetsDir（绝对路径）。
 - insert:
     - id: tt-roleplay
       name: '@dsh-tt/roleplay'
       config:
-        assetsDir: 'X:\dsh-tt'
         takeover: false
     - id: preset-roleplay
       name: '@deepseek-ai/dsh-agent-preset'
@@ -22,5 +24,4 @@
           - id: tt-roleplay-agent
             name: '@dsh-tt/roleplay/agent'
             config:
-              assetsDir: 'X:\dsh-tt'
               takeover: true

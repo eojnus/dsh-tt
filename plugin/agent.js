@@ -1,14 +1,20 @@
 // DSH 角色扮演插件（Host 侧）
 //
 // 职责（仅 takeover=true 的实例，即「角色扮演」preset 内的实例）：
-// 1) 扫描资产（卡 / 预设 / 世界书）；
+// 1) 扫描资产（卡 / 预设 / 世界书），作为没有绑定时用的默认值；
 // 2) 在 agent/inbox/inserted 里读客户端通过 prompt 信封传来的绑定（卡 + 预设 + 变量），
-//    在下一次 system-prompt 组装之前重建 ST 语义的系统提示词；
+//    在下一次 system-prompt 组装之前更新**该会话自己的**提示词状态；
 // 3) 在 agent/pre-step 里把信封从进入步骤的消息中剥离，保证会话日志只留用户原文。
+//
+// 会话隔离：preset 的插件树由所有使用该 preset 的 agent 共享（dsh-agent-preset-registry
+// 的 mountPreset），因此提示词段必须注册在 `agent.ctx` 上——它只对该 agent 生效，
+// 并在 agent 释放时自动撤销。段文本是函数，每次组装时读取该会话的最新状态，
+// 所以换卡/改变量不需要重新注册段（也就不会触发 system-prompt/change 风暴）。
 //
 // 根层实例只负责让客户端模块被发现，不接管任何提示词。
 
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { loadLibrary, bookEntriesOf, resolveActive } from './lib/library.js';
 import { activateEntries } from './lib/lorebook.js';
 import { applyWorldInfoDecorators } from './lib/decorators.js';
@@ -25,8 +31,17 @@ export const inject = ['systemPrompt'];
 const MARK = '\u0000TT\u0000';
 const EJS_ERROR_RE = /<!-- dsh-tt EJS error: ([\s\S]*?) -->/g;
 
+/** 插件目录（…/dsh-tt/plugin），项目根是它的上一级。 */
+const PLUGIN_DIR = path.dirname(fileURLToPath(import.meta.url));
+const PROJECT_ROOT = path.resolve(PLUGIN_DIR, '..');
+
 function log(...args) {
   try { console.log('[dsh-tt]', ...args); } catch { /* ignore */ }
+}
+
+function shortId(agent) {
+  const raw = String(agent?.id ?? '');
+  return raw ? raw.slice(-8) : 'shared';
 }
 
 function buildScanText(card) {
@@ -98,15 +113,25 @@ function presetKeyOf(preset) {
   ].join('|');
 }
 
+/** 资产根目录：显式配置优先，否则用项目根下的 参考/ 与 assets/。 */
+export function resolveAssetRoots(config = {}) {
+  const base = config.assetsDir ? path.resolve(String(config.assetsDir)) : PROJECT_ROOT;
+  const roots = [path.join(base, '参考'), path.join(base, 'assets')];
+  for (const extra of Array.isArray(config.assetDirs) ? config.assetDirs : []) {
+    if (typeof extra === 'string' && extra.trim()) roots.push(path.resolve(extra.trim()));
+  }
+  return roots;
+}
+
 export function apply(ctx, config = {}) {
   if (config.takeover !== true) {
     log('根层实例：只提供客户端模块与资产扫描，不接管提示词（takeover=true 的预设实例才接管）。');
     return;
   }
 
-  const root = config.assetsDir || 'X:\\dsh-tt';
-  const roots = [path.join(root, '参考'), path.join(root, 'assets')];
+  const roots = resolveAssetRoots(config);
   const maxContext = Number(config.maxContext) || 128000;
+  const userName = config.userName || '你';
 
   let library;
   try {
@@ -116,24 +141,31 @@ export function apply(ctx, config = {}) {
     library = { cards: [], presets: [], lorebooks: [], errors: [] };
   }
   log(`资产：${library.cards.length} 张卡 / ${library.presets.length} 个预设 / ${library.lorebooks.length} 本世界书` +
-    (library.errors.length ? ` / ${library.errors.length} 个错误` : ''));
+    (library.errors.length ? ` / ${library.errors.length} 个错误` : '') + `（根：${roots.join(' ; ')}）`);
 
-  const state = {
-    card: null,
-    presetBase: null,
-    presetOverrides: null,
-    preset: null,
-    variables: {},
-    variablesHash: '',
-    greeting: '',
-    systemText: '',
-    depthText: '',
-    disposeSection: null,
-    lastKey: '',
-    renders: 0,
-  };
   const cardCache = new Map();
-  const keyedCards = new Map();
+  /** agentId → { agent, state, disposeSection } */
+  const records = new Map();
+  /** 没有 agent 时的兜底记录（正常路径不会用到）。 */
+  let sharedRecord = null;
+
+  function createState() {
+    return {
+      card: null,
+      presetBase: null,
+      presetBaseKey: '',
+      presetOverrides: null,
+      presetOverridesKey: '',
+      preset: null,
+      variables: {},
+      variablesHash: '',
+      greeting: '',
+      systemText: '',
+      depthText: '',
+      lastKey: '',
+      renders: 0,
+    };
+  }
 
   function composeDepth(depth, injected) {
     const items = [
@@ -145,30 +177,32 @@ export function apply(ctx, config = {}) {
     return items.map((item) => item.content).filter(Boolean).join('\n\n');
   }
 
-  function render(card, preset) {
+  function render(record) {
+    const state = record.state;
+    if (!state.card) return;
     const budget = Number(config.worldInfoBudget) || Math.round(maxContext * 0.25);
     const env = createMacroEnv({
-      card,
-      userName: config.userName || '你',
+      card: state.card,
+      userName,
       maxPrompt: config.maxPrompt,
       maxContext,
     });
     const lorebookByName = new Map();
     const scope = createEjsScope(state.variables, {
       getwi: (entryName) => lorebookByName.get(entryName) ?? '',
-      getchar: () => card?.name ?? '',
+      getchar: () => state.card?.name ?? '',
       resolve: (key) => (env && key in env ? env[key] : undefined),
     });
     // @@if 等装饰器在激活阶段就求值：条件为假的条目不占 token 预算，
     // 激活条目存的是去掉装饰器指令后的最终正文。
     const lorebook = activateEntries({
-      entries: bookEntriesOf(card),
-      scanText: buildScanText(card),
+      entries: bookEntriesOf(state.card),
+      scanText: buildScanText(state.card),
       budget,
       decorateEntry: (entry) => applyWorldInfoDecorators(entry.content, scope),
     });
     for (const entry of lorebook.activated || []) lorebookByName.set(entry.comment, entry.content);
-    const rendered = renderPrompt({ card, preset, lorebook, env, ejsScope: scope });
+    const rendered = renderPrompt({ card: state.card, preset: state.preset, lorebook, env, ejsScope: scope });
     state.systemText = [rendered.system, rendered.tail].filter(Boolean).join('\n\n');
     state.depthText = composeDepth(rendered.depth, rendered.injected);
     state.renders += 1;
@@ -177,7 +211,7 @@ export function apply(ctx, config = {}) {
     const combined = `${state.systemText}\n${state.depthText}`;
     for (const match of combined.matchAll(EJS_ERROR_RE)) errors.push(match[1]);
     const tail = [
-      `角色「${card?.name ?? '-'}」预设「${preset?.name ?? '默认'}」`,
+      `[${shortId(record.agent)}] 角色「${state.card?.name ?? '-'}」预设「${state.preset?.name ?? '默认'}」`,
       `世界书 ${lorebook.stats.activated}/${lorebook.stats.total}（${lorebook.stats.tokens} tokens）`,
       `system ${state.systemText.length} 字 depth ${rendered.depth.length} injected ${rendered.injected.length}`,
     ];
@@ -185,32 +219,13 @@ export function apply(ctx, config = {}) {
     log(tail.join(' · '));
   }
 
-  function installSection() {
-    try {
-      if (state.disposeSection) {
-        try { state.disposeSection(); } catch { /* ignore */ }
-        state.disposeSection = null;
-      }
-      const greetingBlock = state.greeting
-        ? `[你的开场白（已作为本局对话的第一条消息发给玩家）]\n${state.greeting}`
-        : '';
-      const text = [state.systemText, state.depthText, greetingBlock].filter(Boolean).join('\n\n');
-      const section = {
-        name: 'dsh-tt:roleplay',
-        order: 100,
-        complete: true,
-        interpolate: false,
-        text,
-      };
-      try {
-        state.disposeSection = ctx.systemPrompt.section(section);
-      } catch (error) {
-        log('complete 段被拒，退回普通段：', error?.message || error);
-        state.disposeSection = ctx.systemPrompt.section({ ...section, complete: false });
-      }
-    } catch (error) {
-      log('systemPrompt 不可用：', error?.message || error);
-    }
+  /** 组装一段系统提示词文本（每次组装时调用，读到的是该会话最新状态）。 */
+  function composeSectionText(record) {
+    const state = record.state;
+    const greetingBlock = state.greeting
+      ? `[你的开场白（已作为本局对话的第一条消息发给玩家）]\n${state.greeting}`
+      : '';
+    return [state.systemText, state.depthText, greetingBlock].filter(Boolean).join('\n\n');
   }
 
   /** 解析信封里的卡；优先按客户端给的 hash 命中缓存。 */
@@ -226,9 +241,14 @@ export function apply(ctx, config = {}) {
     return normalized;
   }
 
-  /** 应用一次客户端绑定。返回是否改变了系统提示词。 */
-  function applyBinding(binding) {
+  function findPresetByName(name) {
+    return library.presets.find((entry) => entry.name === name || entry.id === name)?.preset ?? null;
+  }
+
+  /** 应用一次客户端绑定。返回是否改变了该会话的提示词状态。 */
+  function applyBinding(record, binding) {
     if (!binding || typeof binding !== 'object') return false;
+    const state = record.state;
     let changed = false;
 
     // 卡：优先整卡 JSON（导入的卡）；否则按名字在资产库里找。
@@ -257,11 +277,12 @@ export function apply(ctx, config = {}) {
         baseChanged = true;
       }
     } else if (binding.presetName) {
-      const found = library.presets.find((entry) => entry.name === binding.presetName || entry.id === binding.presetName);
-      if (found?.preset) {
-        const key = `lib|${found.id}|${presetKeyOf(found.preset)}`;
+      const found = findPresetByName(binding.presetName);
+      const entry = library.presets.find((item) => item.name === binding.presetName || item.id === binding.presetName);
+      if (found) {
+        const key = `lib|${entry?.id ?? binding.presetName}|${presetKeyOf(found)}`;
         if (key !== state.presetBaseKey) {
-          state.presetBase = found.preset;
+          state.presetBase = found;
           state.presetBaseKey = key;
           baseChanged = true;
         }
@@ -315,34 +336,95 @@ export function apply(ctx, config = {}) {
 
     if (changed || state.lastKey !== nextKey) {
       state.lastKey = nextKey;
-      render(state.card, state.preset);
-      installSection();
+      render(record);
       return true;
     }
     return false;
   }
 
-  // 初始绑定：配置里指定的卡，否则第一张。
-  const initial = resolveActive(library, config.activeCharacter);
-  if (!initial) {
-    log('没有找到角色卡；把卡放进 assets/characters 或 参考/ 目录。');
-    return;
+  /** 为该 agent 建立状态与它自己的提示词段。 */
+  function ensureRecord(agent) {
+    const id = agent?.id ?? '__shared__';
+    if (agent?.id) {
+      const existing = records.get(id);
+      if (existing) return existing;
+    } else if (sharedRecord) {
+      return sharedRecord;
+    }
+
+    const record = { agent: agent ?? null, state: createState(), disposeSection: null };
+    // 初始绑定：配置指定的卡，否则资产库第一张。
+    const initial = resolveActive(library, config.activeCharacter);
+    if (initial?.card) {
+      record.state.card = initial.card;
+      record.state.lastKey = cardKeyOf(initial.card);
+    }
+    const base = config.presetName ? findPresetByName(config.presetName) : (library.presets[0]?.preset ?? null);
+    if (base) {
+      record.state.presetBase = base;
+      record.state.presetBaseKey = `init|${presetKeyOf(base)}`;
+      record.state.preset = base;
+    }
+    if (record.state.card) render(record);
+
+    const section = {
+      name: 'dsh-tt:roleplay',
+      order: 100,
+      complete: true,
+      interpolate: false,
+      text: () => composeSectionText(record),
+    };
+    const target = agent?.ctx;
+    if (target?.systemPrompt) {
+      try {
+        record.disposeSection = target.systemPrompt.section(section);
+      } catch (error) {
+        log(`[${shortId(agent)}] complete 段被拒，退回普通段：`, error?.message || error);
+        try {
+          record.disposeSection = target.systemPrompt.section({ ...section, complete: false });
+        } catch (inner) {
+          log(`[${shortId(agent)}] 提示词段注册失败：`, inner?.message || inner);
+        }
+      }
+      // agent 释放时清掉记录（段的撤销由 agent.ctx 自己负责）。
+      try {
+        target.effect(() => () => {
+          if (agent?.id && records.get(agent.id) === record) records.delete(agent.id);
+          if (sharedRecord === record) sharedRecord = null;
+        }, 'dsh-tt.roleplay.record');
+      } catch { /* 记录清理是尽力而为 */ }
+    } else {
+      log(`[${shortId(agent)}] agent.ctx.systemPrompt 不可用；本次会话没有提示词段（检查 agent 作用域）。`);
+    }
+
+    if (agent?.id) records.set(id, record);
+    else sharedRecord = record;
+    return record;
   }
-  state.card = initial.card;
-  state.presetBase = config.presetName
-    ? library.presets.find((entry) => entry.name === config.presetName || entry.id === config.presetName)?.preset ?? null
-    : (library.presets[0]?.preset ?? null);
-  state.presetBaseKey = `init|${presetKeyOf(state.presetBase)}`;
-  state.preset = state.presetBase;
-  render(state.card, state.preset);
-  installSection();
+
+  function recordFor(agent) {
+    if (!agent?.id) return sharedRecord ?? ensureRecord(agent);
+    return records.get(agent.id) ?? ensureRecord(agent);
+  }
+
+  // 每个使用本 preset 的 agent 一建立就注册它自己的段。
+  try {
+    ctx.on('agent/created', ({ agent } = {}) => {
+      try { ensureRecord(agent); } catch (error) { log('agent/created 处理失败：', error?.message || error); }
+    });
+    log('已挂载 agent/created（按会话注册提示词段）。');
+  } catch (error) {
+    log('agent/created 订阅失败：', error?.message || error);
+  }
 
   // 消息进入收件箱时，在 system-prompt 组装之前应用绑定。
   try {
     ctx.on('agent/inbox/inserted', (payload) => {
       try {
         const envelope = readEnvelope(payload?.message);
-        if (envelope) applyBinding(envelope.binding);
+        if (!envelope) return;
+        const record = recordFor(payload?.agent);
+        applyBinding(record, envelope.binding);
       } catch (error) {
         log('inbox/inserted 处理失败：', error?.message || error);
       }
@@ -353,6 +435,8 @@ export function apply(ctx, config = {}) {
   }
 
   // 进入步骤前剥离信封：日志与模型都只看到用户原文。
+  // 注意：DSH 先 assemble 系统提示词、再发 agent/pre-step（agent-loop preStep），
+  // 所以这里的绑定应用只是兜底，真正的时机是 inbox/inserted。
   try {
     ctx.on('agent/pre-step', async (payload, next) => {
       const decision = await next();
@@ -368,8 +452,7 @@ export function apply(ctx, config = {}) {
           return replaceMessageText(message, envelope.body);
         });
         if (!changed) return decision;
-        // 兜底：若 inbox 事件没有触发（例如恢复会话），这里再应用一次。
-        if (binding) applyBinding(binding);
+        if (binding) applyBinding(recordFor(payload?.agent), binding);
         return { ...decision, messages };
       } catch (error) {
         log('pre-step 处理失败：', error?.message || error);
