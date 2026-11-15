@@ -19,9 +19,9 @@ const libSource = bundleLibSource();
 
 // 客户端只需要元数据：卡/预设/世界书正文由 workspaceFiles 在运行时按需读取。
 // 系统提示词预览留在 build/snapshot.json（已排除出版本库），不注入客户端包。
+// 不带 generatedAt：否则每次构建都会让 plugin/client.js 产生一行无意义 diff。
 const clientSnapshot = {
   version: snapshot.version,
-  generatedAt: snapshot.generatedAt,
   roots: snapshot.roots,
   counts: snapshot.counts,
   cards: snapshot.cards,
