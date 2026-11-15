@@ -9,6 +9,9 @@
     "check": "node tools/check.mjs",
     "test": "node tests/run.mjs",
     "verify:e2e": "node tools/verify-e2e.mjs",
+    "inspect:cards": "node tools/inspect-cards.mjs",
+    "inspect:th": "node tools/inspect-th-scripts.mjs",
+    "inspect:remote": "node tools/inspect-remote.mjs",
     "install:profile": "node tools/install.mjs install",
     "uninstall:profile": "node tools/install.mjs uninstall",
     "status": "node tools/install.mjs status"

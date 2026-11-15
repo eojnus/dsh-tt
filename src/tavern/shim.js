@@ -987,7 +987,17 @@
     if (event && event.message) {
       scriptError(currentScript, event.error || event.message);
     }
-  });
+  }, true);
+  // 资源加载失败（module import / img / link）不会冒泡成 message 错误，
+  // 用捕获阶段把它们记下来——MVU 依赖 jsdelivr，失败时这条日志是唯一线索。
+  window.addEventListener('error', function (event) {
+    var target = event && event.target;
+    var url = target && (target.src || target.href);
+    if (!url) return;
+    if (event.message) return;
+    scriptErrors.push({ id: currentScript && currentScript.id, name: currentScript && currentScript.name, error: '资源加载失败：' + url });
+    log('error', '资源加载失败：' + url);
+  }, true);
   window.addEventListener('unhandledrejection', function (event) {
     scriptError(currentScript, event.reason);
   });

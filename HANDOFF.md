@@ -65,16 +65,21 @@
 | `plugin/lib/ejs.js` | EJS 运行时：跨块、trim（官方语义）、转义、路径变量、lodash 子集、faker；`stat_data`/`v` getter |
 | `plugin/lib/prompt.js` | ST 固定内置段 + `prompt_order` 用户段；`applyPresetOverrides`；深度/绝对注入分桶 |
 | `plugin/lib/regex.js` | **新增**：ST regex_scripts 解析、placement 作用域过滤、世界书(5)/用户输入(1) 应用 |
-| `plugin/client.js` | 构建产物（211.4 KB）；由 `tools/build-client.mjs` 生成，**勿手改** |
-| `src/client.template.js` | 面板模板：三区布局、开场白选择器、世界书/预设/扩展/设置、TH 宿主 |
-| `src/tavern/core.js` | TH 纯状态/API 语义（Node 可跑，`tests/tavern-core.test.mjs` 覆盖） |
-| `src/tavern/shim.js` | iframe 内 ST/TH 全局、toastr、`$`、`_`、弹窗桥、脚本执行 |
-| `tools/snapshot.mjs` | 资产 → `build/snapshot.json`（v3 元数据；含 `filePath`，不含正文；报告 `effectiveLength`） |
-| `tools/build-client.mjs` | 注入快照 + `src/tavern/*` → `plugin/client.js` |
-| `tools/check.mjs` | 管线自检：资产清单、世界书激活/分桶/递归、system/有效提示词字数、残留检查 |
+| `plugin/lib/pipeline.js` | **新增**：同构提示词管线（不碰 Node API）。Host 的 `agent.js`、`tools/snapshot.mjs`、`tools/check.mjs` 与面板预览共用这一份 |
+| `plugin/client.js` | 构建产物（311.8 KB）；由 `tools/build-client.mjs` 生成，**勿手改** |
+| `src/client.template.js` | 面板模板：三区布局、开场白选择器、世界书/预设/预览/正则/扩展/设置、TH 宿主、自检 |
+| `src/tavern/core.js` | TH 纯状态/API 语义（Node 可跑，`tests/tavern-core.test.mjs` 18 个用例） |
+| `src/tavern/shim.js` | iframe 内 ST/TH 全局、toastr、`$`、`_`、弹窗桥、脚本执行、资源加载失败捕获 |
+| `tools/snapshot.mjs` | 资产 → `build/snapshot.json`（v3 元数据；含 `filePath`，不含正文；报告 effectiveLength） |
+| `tools/build-client.mjs` | 注入快照 + `src/tavern/*` + 同构管线 → `plugin/client.js` |
+| `tools/bundle-lib.mjs` | 8 个 lib 模块 → 同构脚本（`TT_LIB`），供面板预览 |
+| `tools/check.mjs` | 管线自检：资产清单、世界书激活/分桶/递归、system/完整段字数、残留检查 |
 | `tools/install.mjs` | profile 安装器：备份 + junction + 补丁块 + 安装标记 + 安全卸载 |
 | `tools/verify-e2e.mjs` | 对运行中的 `dsh web` 发信封，断言 system 由插件组装、用户日志只剩正文 |
-| `tests/` | 117 个用例 + 合成夹具（`characters/`、`presets/`、`lorebooks/`）；`node tests/run.mjs` |
+| `tools/inspect-cards.mjs` | 卡体检：逐卡报告世界书/脚本/正则/InitVar 与管线数字 |
+| `tools/inspect-th-scripts.mjs` | 卡内启用脚本用到哪些 TH/ST API，与 shim 对照 |
+| `tools/inspect-remote.mjs` | 拉取远程 MVU bundle，静态核对其 API 面与依赖 |
+| `tests/` | 126 个用例 + 合成夹具（`characters/`、`presets/`、`lorebooks/`）；`node tests/run.mjs` |
 | `build/` | 生成物、验证日志、profile 备份（`.gitignore` 排除） |
 | `tmp/` | 调研脚手架：`asar.mjs`、`positions.mjs`、`diff-normalize.mjs`、`bucket-diff.mjs`、`ab-trim.mjs` 等（排除出版本库） |
 | `参考/` | 用户资产（3 张 PNG 卡 + 1 个预设；`.gitignore` 排除） |
@@ -174,8 +179,9 @@
 $node = 'C:\Users\Administrator\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe'
 & $node tools/snapshot.mjs
 & $node tools/build-client.mjs
-& $node tests/run.mjs           # 117 个用例
+& $node tests/run.mjs           # 126 个用例
 & $node tools/check.mjs         # 管线自检（默认第一张卡）
+& $node tools/inspect-cards.mjs # 三张卡的体检报告
 ```
 
 > `node --test tests/` 在本机会 `spawn EPERM`（沙箱禁止子进程管道），必须用 `tests/run.mjs`。
@@ -183,9 +189,9 @@ $node = 'C:\Users\Administrator\.dsh\dsh-runtimes\dsh-primary-runtime\dependenci
 输出（2026-11-15 最后一次，`DSH_TT_ACTIVE=春日狂想曲·统一版（玩家通道）`）：
 
 ```
-snapshot: cards=3 presets=1 lorebooks=0 errors=0 | active=天极1-5-0 wi=33/201 sys=40393
-client.js 已生成（211.4 KB：快照 1.9 KB、核心 45.3 KB、shim 57.4 KB）
-tests 117 / pass 117 / fail 0
+snapshot: cards=3 presets=1 lorebooks=0 errors=0 | active=天极1-5-0 wi=33/201 sys=40393 effective=40665
+client.js 已生成（311.8 KB：快照 1.9 KB、核心 45.3 KB、shim 57.9 KB、管线 78.6 KB）
+tests 126 / pass 126 / fail 0
 ```
 
 ### 7.2 安装 / 卸载
@@ -223,13 +229,14 @@ Remove-Item "$env:USERPROFILE\.dsh\profiles\desktop-verify" -Recurse -Force
 
 | 优先级 | 项 | 落点/说明 |
 |---|---|---|
-| **P0** | **完全退出并重开 DSH 后，实机验证新面板** | 侧栏「角色扮演」→ 选卡（会弹开场白选择）→ 新建对话 → 发消息；看「设置」的诊断日志与「扩展」的 TH 状态 |
+| **P0** | **完全退出并重开 DSH 后按下面的清单验一遍** | 侧栏「角色扮演」→ 选卡（弹开场白选择）→ 新建对话 → 发一条消息；然后逐页看：角色 / 世界书 / 预设 / 预览 / 正则 / 扩展 / 设置 |
+| **P0** | 设置页「运行自检」 | 一次点完能看到通道、资产、管线、TH 宿主四类结果；任何 ❌ 直接把那一行发我 |
 | **P0** | 若面板白屏：看 `window.__dshTT`（Boundary 捕获） | `src/client.template.js` 的 Boundary 会把错误写进该全局 |
-| P1 | TH 在真实浏览器里跑 MVU | 面板「扩展」→ 打开脚本界面；看是否出现 MVU 面板/日志、`stat_data` 是否出现在「状态变量」 |
+| P1 | TH 在真实浏览器里跑 MVU | 进局后看诊断里是否有「执行脚本「…MVU…」（module）」、有没有「资源加载失败：<url>」；再看「扩展」→ 状态变量里是否出现 `stat_data` |
 | P2 | **Shadow Chat**（真正改写历史） | 解锁 `placement=2` 的 prompt 侧正则、@depth 逐消息插入、swipe/编辑/删除。前置：Host 侧生成通道（`ctx.llm.stream` + 客户端流式）或 DSH 新 API |
-| P2 | TH `generate`/`generateRaw` | 需要一个**不被 roleplay 接管**的生成通道（第二个 preset 或直连 `ctx.llm.stream`） |
+| P2 | TH `generate`/`generateRaw` | 设计草案见 DESIGN §22.8：辅助会话 + 信封 + `session/events` 回填 |
 | P2 | 重新生成 / 分支 | 可用 `session/fork` 起步，但语义与 ST 的 swipe 不同 |
-| P3 | 采样参数透传、群聊、TH 远程脚本缓存/授权、完整前端渲染 | §7 M4/M5、§14.8 |
+| P3 | 采样参数透传、群聊、TH 远程脚本缓存（离线可复现）、完整前端渲染 | §7 M4/M5、§14.8 |
 
 ---
 

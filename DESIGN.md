@@ -1285,6 +1285,7 @@ session.append('user/message', 剥离后的消息)  ← 日志只有原文
 | 正则（`plugin/lib/regex.js`） | ST `regex_scripts` 解析与作用域过滤；Host 侧落地 placement=5（世界书正文）与 placement=1（用户输入） |
 | 开场白选择器（客户端） | 有多条 `alternate_greetings` 时弹层选择，写入 `sessionMeta.greeting` |
 | 提示词预览（客户端） | 新增「预览」页：用**与 Host 同源**的管线（`tools/bundle-lib.mjs` 同构包）算出 system 段、世界书激活/跳过清单与字数，可复制完整段 |
+| 正则页与自检（客户端） | 新增「正则」页（每条规则的 placement / markdownOnly / promptOnly / 实际生效位置）与设置页「运行自检」（通道、资产、管线、TH 宿主四类检查逐条 ✅/❌） |
 | 管线去重 | 抽出 `plugin/lib/pipeline.js`（不碰 Node API）：`agent.js`、`tools/snapshot.mjs`、`tools/check.mjs`、面板预览四处共用同一实现 |
 | 工具链 | `tests/`（117 个用例）+ `tools/install.mjs`（幂等安装/卸载/备份）+ `tools/check.mjs`（管线自检）+ `tools/verify-e2e.mjs`（实机 HTTP 验证） |
 | 文档 | 本节；`HANDOFF.md` 同步环境事实 |
@@ -1346,6 +1347,9 @@ node tests/run.mjs                            # 125 个用例（单进程，绕�
 node tools/check.mjs                          # 管线自检（激活数/分桶/注入/残留）
 node tools/install.mjs status|install|uninstall [--profile <名字>] [--profile-dir <路径>]
 node tools/verify-e2e.mjs "http://127.0.0.1:PORT/?token=…"   # 对运行中的实例做端到端验证
+node tools/inspect-cards.mjs                   # 卡体检：世界书/脚本/正则/InitVar/管线数字
+node tools/inspect-th-scripts.mjs               # 卡内启用脚本用到哪些 TH/ST API，与 shim 对照
+node tools/inspect-remote.mjs                   # 拉取远程 MVU bundle，静态核对其 API 面
 ```
 
 `tests/` 用合成夹具（V3/V2 卡、预设、对象式世界书），**不依赖 `参考/` 里的私有大文件**；`node --test` 在本机会因沙箱禁止子进程管道而 `spawn EPERM`，所以用 `tests/run.mjs` 单进程加载。
@@ -1358,7 +1362,17 @@ node tools/verify-e2e.mjs "http://127.0.0.1:PORT/?token=…"   # 对运行中的
 | 会话隔离 | 两个 agent 绑不同卡：A 的段只含 A 的卡与开场白，B 同理（`tests/agent.test.mjs`） |
 | 实机 e2e（`desktop-verify` profile + `dsh web`） | `system/message` **44,705 字** = 本地引擎同一输入的输出（+38 字开场白块）；`user/message` 中正文 `测试正文`、全库无 `\0TT\0` 信封；`agentPreset=roleplay` 生效 |
 | 安装 | `desktop` profile：junction → `C:\coding\dsh-tt\plugin`、补丁 59 行、`require.resolve` 指向 `plugin/index.js`；重启后生效 |
-| 客户端静态 | `plugin/client.js` 211.4 KB；假 React 渲染 Panel 首屏无异常（`tests/client-render.test.mjs`） |
+| 客户端静态 | `plugin/client.js` 311.8 KB；假 React 渲染 8 个页签全部通过（`tests/client-render.test.mjs`），并因此抓出 `ttTick` 未定义的崩溃 bug |
+
+### 22.7.1 TH 远程依赖（本轮静态盘点）
+
+| 项 | 结果 |
+|---|---|
+| 卡内启用脚本 | 春日 2 个（MVU 91 字 + 热更 24.5k）、天极 3 个（42k / 261k / 3.18M 字）、天元录 6 个（636 字 ~ 23.5k） |
+| 静态 API 面 | 卡内脚本只用到 `eventOn`/`eventMakeFirst`/`getContext`/`getRequestHeaders`（全部已实现） |
+| 真正的调用面在远程 bundle | `MagVarUpdate/artifact/bundle.js`（558.9 KB）用到 **20 个 TH 函数 + 26 个 `SillyTavern` 成员**，我们的 shim 覆盖 **20/20 与 26/26**（按名字；语义另论） |
+| 依赖规模 | bundle.js 还 import 了 `@google/genai`、`@earendil-works/pi-ai` 及其 provider 子模块等 **数十个 jsdelivr 模块**；`mvu_zod.js` 另引 5 个 npm 模块 |
+| 风险 | 首次加载要跑一遍模块图（浏览器 HTTP 缓存之后会快）；任一子模块被墙/404，MVU 就静默不启动。shim 现在会把「资源加载失败：<url>」写进面板诊断 |
 
 ### 22.8 未完成与边界
 
@@ -1367,7 +1381,7 @@ node tools/verify-e2e.mjs "http://127.0.0.1:PORT/?token=…"   # 对运行中的
 | P0 | **完全退出并重开 DSH 后，实机验证新面板（开场白选择器等）** | 用户侧动作；`C:\coding\dsh-tt` 已装进 desktop profile |
 | P1 | TH 在真实浏览器里跑 MVU | 面板「扩展」→ 脚本界面；`stat_data` 是否出现 |
 | P2 | Shadow Chat（真正改写历史） | 解锁 placement=2 的 prompt 正则、@depth 逐消息插入、swipe/编辑/删除；需要 Host 侧生成桥或 DSH 新 API |
-| P2 | TH `generate`/`generateRaw` | 需要不经过 roleplay 接管的生成通道 |
+| P2 | TH `generate`/`generateRaw` | 需要不经过 roleplay 接管的生成通道。**设计草案**：面板开一个辅助会话（`RP · 辅助`），TH 的 `generate` 通过 postMessage 请求面板 → 面板用信封发 prompt（`generate` 走完整 ST 管线，`generateRaw` 带 `raw:true` 让 Host 用最小 system）→ 面板从 `session/events` 取 `assistant/message` 回填给脚本。代价：辅助会话会进会话列表、轮询、取消语义要自己处理 |
 | P3 | 群聊、分支、采样参数透传、远程脚本缓存 | §7 M4/M5 |
 
 
