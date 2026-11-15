@@ -142,6 +142,14 @@ window.__ModuleLoader__.load({
       .tt-modal .tt-modal-body{margin:0 0 12px;max-height:52vh;overflow:auto;}
       .tt-modal input{width:100%;height:30px;border-radius:7px;border:1px solid var(--dsw-alias-border-secondary,rgba(0,0,0,.12));
         padding:0 9px;font:inherit;margin-bottom:10px;}
+      .tt-greet{display:flex;flex-direction:column;gap:3px;width:100%;text-align:left;border:1px solid var(--dsw-alias-border-secondary,rgba(0,0,0,.1));
+        border-radius:9px;padding:10px 12px;margin:0 0 8px;background:var(--dsw-alias-background-primary,#fff);cursor:pointer;font:inherit;color:inherit;
+        transition:background 140ms ease,transform 140ms cubic-bezier(.23,1,.32,1);}
+      .tt-greet:hover{background:var(--dsw-alias-background-secondary,rgba(0,0,0,.03));}
+      .tt-greet:active{transform:scale(.995);}
+      .tt-greet b{font-size:12.5px;font-weight:600;}
+      .tt-greet span{font-size:11px;opacity:.5;}
+      .tt-greet-text{font-size:12.5px;line-height:1.6;opacity:.85;white-space:pre-wrap;margin-top:2px;}
       .tt-thframe{position:absolute;left:-12000px;top:0;width:900px;height:700px;z-index:30;display:flex;flex-direction:column;
         background:var(--dsw-alias-background-primary,#fff);overflow:hidden;}
       .tt-thframe.on{left:0;top:0;right:0;bottom:0;width:auto;height:auto;}
@@ -902,6 +910,7 @@ window.__ModuleLoader__.load({
       const [assetTick, setAssetTick] = useState(0);
       const [toasts, setToasts] = useState([]);
       const [modal, setModal] = useState(null);
+      const [greetingPick, setGreetingPick] = useState(null);
       const [thReady, setThReady] = useState(false);
       const [thShow, setThShow] = useState(false);
       const [thReload, setThReload] = useState(0);
@@ -1105,7 +1114,27 @@ window.__ModuleLoader__.load({
         }
       }, [store.sessionMeta, inferMetaFromTitle, patchStore]);
 
-      const startChat = useCallback(async (card) => {
+      // 开场白选项：first_mes 在前，alternate_greetings 依次在后（空白的丢掉）。
+      const greetingOptionsOf = useCallback(async (card) => {
+        if (!card) return [];
+        const raw = await ensureCard(card);
+        const inner = innerOf(raw);
+        const first = String(inner.first_mes || inner.firstMes || '').trim();
+        const alternates = (Array.isArray(inner.alternate_greetings)
+          ? inner.alternate_greetings
+          : (Array.isArray(inner.alternateGreetings) ? inner.alternateGreetings : []))
+          .map((text) => String(text || '').trim())
+          .filter(Boolean);
+        const options = [];
+        if (first) options.push({ id: 'first', label: '首条问候', text: first });
+        alternates.forEach((text, index) => {
+          options.push({ id: 'alt-' + index, label: `备选 ${index + 1}`, text });
+        });
+        return options;
+      }, [ensureCard]);
+
+      /** 真正建局：给定卡与开场白。 */
+      const openChat = useCallback(async (card, greetingText) => {
         if (!card) return;
         if (!bridge?.ok) { setNotice('会话通道不可用：请重启应用后重试'); return; }
         setNotice('');
@@ -1121,12 +1150,6 @@ window.__ModuleLoader__.load({
           setActiveId(id);
           activeIdRef.current = id;
           if (created?.sessionId) await bridge.rename(id, title);
-          const raw = await ensureCard(card);
-          const inner = innerOf(raw);
-          const greetings = Array.isArray(inner.alternate_greetings)
-            ? inner.alternate_greetings
-            : (Array.isArray(inner.alternateGreetings) ? inner.alternateGreetings : []);
-          const greetingText = String(inner.first_mes || inner.firstMes || greetings[0] || '').trim();
           setView('chat');
           setFloors([]);
           thSentRef.current = false;
@@ -1134,17 +1157,36 @@ window.__ModuleLoader__.load({
             activeCardId: card.id,
             sessionMeta: {
               ...store.sessionMeta,
-              [id]: { cardId: card.id, presetId: store.activePresetId, greeting: greetingText },
+              [id]: { cardId: card.id, presetId: store.activePresetId, greeting: String(greetingText || '') },
             },
           });
-          log(greetingText ? `已新建会话，开场白 ${greetingText.length} 字（只显示，不发送）` : '已新建会话（这张卡没有开场白）');
+          log(greetingText ? `已新建会话，开场白 ${String(greetingText).length} 字（只显示，不发送）` : '已新建会话（这张卡没有开场白）');
           await refreshSessions();
         } catch (error) {
           const message = '开局失败：' + (error && (error.code || error.message) || error);
           log(message);
           setNotice(message);
         } finally { setBusy(false); }
-      }, [bridge, patchStore, ensureCard, refreshSessions, log, store.sessionMeta, store.activePresetId]);
+      }, [bridge, patchStore, refreshSessions, log, store.sessionMeta, store.activePresetId]);
+
+      const startChat = useCallback(async (card) => {
+        if (!card) return;
+        if (!bridge?.ok) { setNotice('会话通道不可用：请重启应用后重试'); return; }
+        setNotice('');
+        try {
+          const options = await greetingOptionsOf(card);
+          // 有多条开场白时先让用户挑一条（ST 的 alternate_greetings 语义）。
+          if (options.length > 1) {
+            setGreetingPick({ card, options });
+            return;
+          }
+          await openChat(card, options[0]?.text || '');
+        } catch (error) {
+          const message = '读取开场白失败：' + (error && (error.code || error.message) || error);
+          log(message);
+          setNotice(message);
+        }
+      }, [bridge, greetingOptionsOf, openChat, log]);
 
       const newChat = useCallback(() => { startChat(activeCard); }, [startChat, activeCard]);
 
@@ -1925,6 +1967,31 @@ window.__ModuleLoader__.load({
           h('div', { className: 'tt-thbox', ref: thFrameRef }),
         ),
         h('div', { className: 'tt-toasts' }, toastNodes),
+        greetingPick ? h('div', {
+          className: 'tt-modal-bg',
+          onClick: (e) => { if (e.target === e.currentTarget) setGreetingPick(null); },
+        },
+          h('div', { className: 'tt-modal' },
+            h('h3', null, `选择开场白 · ${greetingPick.card.name}`),
+            h('div', { className: 'tt-modal-body' },
+              greetingPick.options.map((option) => h('button', {
+                key: option.id,
+                className: 'tt-greet',
+                onClick: () => {
+                  const pick = greetingPick;
+                  setGreetingPick(null);
+                  openChat(pick.card, option.text).catch((error) => log('开局失败：' + (error?.message || error)));
+                },
+              },
+                h('b', null, option.label),
+                h('span', null, option.text.length + ' 字'),
+                h('div', { className: 'tt-greet-text' },
+                  option.text.length > 180 ? option.text.slice(0, 180) + '…' : option.text),
+              )),
+            ),
+            h('div', { style: { display: 'flex', gap: 8, justifyContent: 'flex-end' } },
+              h('button', { className: 'tt-btn', onClick: () => setGreetingPick(null) }, '取消')),
+          )) : null,
         modalNode,
       );
     }
@@ -1936,7 +2003,11 @@ window.__ModuleLoader__.load({
       return copy;
     }
 
-    const STORE_ROOT = 'X:\\dsh-tt';
+    const STORE_ROOT = (() => {
+      const first = Array.isArray(SNAPSHOT.roots) ? String(SNAPSHOT.roots[0] || '') : '';
+      // 快照的根是 <项目根>/参考；会话的 cwd 用项目根（workspaceFiles 的作用域）。
+      return first.replace(/[\\/][^\\/]*$/, '');
+    })();
 
     const BUILTIN_EXTENSIONS = [
       {

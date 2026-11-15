@@ -1,9 +1,9 @@
 # DSH × SillyTavern 角色扮演插件 · 设计文档
 
-> **状态**：v1.0（2026-11-15，会话 28；Host 接管、EJS 跨块、TH 宿主与资产面板已构建，见 §21）
+> **状态**：v1.1（2026-11-15，会话 30；会话隔离提示词段、世界书高级语义、prompt 侧正则、开场白选择器、测试与安装工具链，见 §22）
 > **维护方式**：本文件是唯一事实来源。每轮讨论后追加「决策记录」与「变更日志」，不推翻历史结论，只做带编号的修订。
 > **基线环境**：DeepSeek Harness Desktop，profile = `desktop`，构建日期 2026-11-14（DSH 事实以该安装为准，路径见附录 A）。
-> **已定决策**：D-001（被 D-006 取代）· D-002 Shadow Chat · D-003 首批范围 · D-004 不做 ST 扩展 JS 生态 · D-005 术语 · D-006 全局面板 + 侧栏入口 · D-007 聊天面与会话绑定 · D-008 UI 设计先加载技能 · D-009 必须兼容酒馆助手（TavernHelper）运行时 · D-010 里程碑重排 · D-011 独立 RP 模式（agent preset：零工具、插件接管系统提示词）· D-017 root/agent 拆分 · D-018 资产按需读取 · D-019 TH iframe 宿主 · D-020 深度注入近似 · D-021 ST 固定内置段顺序。
+> **已定决策**：D-001（被 D-006 取代）· D-002 Shadow Chat · D-003 首批范围 · D-004 不做 ST 扩展 JS 生态 · D-005 术语 · D-006 全局面板 + 侧栏入口 · D-007 聊天面与会话绑定 · D-008 UI 设计先加载技能 · D-009 必须兼容酒馆助手（TavernHelper）运行时 · D-010 里程碑重排 · D-011 独立 RP 模式（agent preset：零工具、插件接管系统提示词）· D-017 root/agent 拆分 · D-018 资产按需读取 · D-019 TH iframe 宿主 · D-020 深度注入近似 · D-021 ST 固定内置段顺序 · D-022 每会话提示词段（`agent.ctx`） · D-023 prompt 侧正则只做 placement 1/5 · D-024 深度注入仍是近似（等 Shadow Chat） · D-025 世界书计时以「带信封的用户消息数」为单位。
 
 ---
 
@@ -511,6 +511,11 @@ interface ScriptRecord {
 | **D-019** | 2026-11-15 | TH 运行时 = 隔离 iframe + `src/tavern/core.js`（纯状态/API）+ `src/tavern/shim.js`（DOM/ST/TH 全局）+ 面板 postMessage 桥；sandbox 用 `allow-scripts allow-same-origin` | JS-Slash-Runner 的 `SillyTavern` 全局与 `registerScriptPreference` 都依赖 `window.parent`；没有 same-origin 时 MVU 会因跨源访问失败而不启用 | 变量五作用域、消息变量、事件总线、世界书、宏、toastr、弹窗与 jQuery/lodash 子集已实现；`generate` 与聊天编辑 API 有明确边界（见 §21.9） |
 | **D-020** | 2026-11-15 | `@depth` / 绝对注入条目按深度**降序追加在 system 段末尾**，不插进对话消息之间 | 实测 `agent/pre-step` 的 `messages` 只允许 user 角色、且消息被冻结；`PreStepDecision.messages` 类型是 `UserMessage[]`，无法插入 system/assistant 消息 | 深度 0 最靠近对话；会话日志仍只有用户原文；后续若要逐消息注入，需要 Shadow Chat 或新的 Host API |
 | **D-021** | 2026-11-15 | 系统提示词按 ST 的**固定内置段顺序**（worldInfoBefore → main → worldInfoAfter → charDescription → charPersonality → scenario → personaDescription → nsfw → jailbreak）在前，`prompt_order` 只决定用户 prompt 部分的顺序；面板启停落到 `applyPresetOverrides` | 参考预设的 `prompt_order` 不含 `main`/`charDescription` 等内置 marker；旧实现只按 order 走，导致 Main Prompt 与卡字段整段丢失 | `renderPrompt` 内置段 + 用户段；`main`/内置段的启用状态也受覆盖控制 |
+| **D-022** | 2026-11-15 | 提示词段按 **agent** 注册（`agent.ctx.systemPrompt.section`，`text` 为函数），不再注册在 preset 作用域 | preset 的插件树被所有使用该 preset 的 agent 共享（`mountPreset`）；preset 作用域只有一份状态，多局并行会互相污染。`agent.ctx` 的注册只对该 agent 生效并在释放时撤销（`dsh-agent/README.zh.md`） | `agent.js` 改为 `records: Map<agentId, {state, section}>`；`agent/created` 建段、`inbox/inserted` 更新状态；段文本在组装时求值，换卡/改变量不必重注册 |
+| **D-023** | 2026-11-15 | prompt 侧正则只实现 placement=1（用户输入）与 5（世界书）；placement=2 的 prompt 侧规则明确不做 | `agent/request` 官方注明「不能改消息」，`agent/pre-step` 只能改进入本步的 user 消息；assistant 历史只能靠 Shadow Chat 重写 | `plugin/lib/regex.js`；参考资产里没有任何 `[5]` 规则、`[2]` 有 40+ 条 → 缺口集中且可解释 |
+| **D-024** | 2026-11-15 | @depth 逐消息插入继续搁置，维持 D-020 的「按深度降序追加 system 末尾」 | 同上：无法插入 system/assistant 角色的历史消息；`PreStepDecision.messages` 只接受 user 消息 | 深度注入的**内容**不丢、**位置**是近似；面板与文档里标注 |
+| **D-025** | 2026-11-15 | 世界书 sticky/cooldown/delay 的计时单位是「带信封的用户消息数」（`worldInfo.turn`），不是 ST 的聊天消息条数 | Host 看不到完整聊天长度；面板每发一次带信封的消息就是一个回合 | 计时误差在一楼之内；`sticky/cooldown/delay` 已可用于节庆/冷却类条目 |
+
 
 ---
 
@@ -1266,6 +1271,104 @@ session.append('user/message', 剥离后的消息)  ← 日志只有原文
 
 ---
 
+## 22. v0.3 实现记录（2026-11-15，会话 30）
+
+> 本节记录会话 30 的落地与实测；对 §15/§21 的假设做**勘误**，不推翻历史结论。
+
+### 22.1 本轮交付
+
+| 模块 | 变更 |
+|---|---|
+| 会话隔离（`plugin/agent.js`） | 提示词段从 preset 作用域搬到 **`agent/ctx`**：`agent/created` 时注册，`text` 是函数，每次组装读该会话最新状态。多局并行不再互相污染（D-022） |
+| 路径解耦 | 资产根目录从模块位置推导（仓库根下 `参考/`、`assets/`），去掉 `X:\dsh-tt` 硬编码；客户端 `STORE_ROOT` 也从快照推导 |
+| 世界书（`plugin/lib/lorebook.js`） | 递归扫描、sticky/cooldown/delay、delayUntilRecursion（分级）、inclusion group（跨轮占位）、groupOverride、excludeRecursion、outlet 命名桶、`@@activate`/`@@dont_activate` 前置判定、跳过原因去重 |
+| 正则（`plugin/lib/regex.js`） | ST `regex_scripts` 解析与作用域过滤；Host 侧落地 placement=5（世界书正文）与 placement=1（用户输入） |
+| 开场白选择器（客户端） | 有多条 `alternate_greetings` 时弹层选择，写入 `sessionMeta.greeting` |
+| 工具链 | `tests/`（117 个用例）+ `tools/install.mjs`（幂等安装/卸载/备份）+ `tools/check.mjs`（管线自检）+ `tools/verify-e2e.mjs`（实机 HTTP 验证） |
+| 文档 | 本节；`HANDOFF.md` 同步环境事实 |
+
+### 22.2 环境勘误（本机实测，覆盖 §1/§7.3/§9）
+
+| 事实 | 结论 |
+|---|---|
+| 项目路径 | 现在是 `C:\coding\dsh-tt`（`X:` 盘不存在）；代码与文档里的绝对路径必须推导或配置 |
+| DSH 版本 | 仍是 `0.2.2-rc.3`，`agent/ctx`、`agent/created`、`systemPrompt.section` 行为与 §21.2 一致 |
+| 目录联接识别 | 本机 Node 把 junction 当普通目录：`lstat().isSymbolicLink()===false`、`readlinkSync` 抛 `EINVAL`。但**读文件与 `require.resolve` 正常**。安装器因此用「读 package.json 的 name + 解析成功 + 安装标记文件」判定，卸载用 `fs.rmdirSync`（对联接只删链接，不跟随） |
+| 独立世界书 | ST 导出的 `entries` 是**对象**（`{"0":{…}}`），旧代码只认数组 → 已修 |
+| 世界书位置 | V3 卡把 atDepth 存在 `extensions.position`，而顶层 `position` 是 `"after_char"`。旧代码只看顶层 → 条目被错误塞进 after 桶。修好后参考卡 `uid=11 格式`（1,307 字）回到 `atDepth(0, user)`；**有效提示词仍是 44,667 字**（内容没丢，只是桶对了） |
+| EJS 裁剪 | 旧实现的 `<%_` 只吃空格、`_%>` 与 `-%>` 同义；已对齐官方语义。参考卡 415 个 `-%>`、0 个 `<%_`/`_%>`，因此该修正**不改变**参考卡输出 |
+| `agent/request` | 文档明确「不能改消息」（§21 未记录这点）→ assistant 历史无法改写，这一条直接决定了 placement=2 的 prompt 侧正则与 @depth 的边界（D-023/D-024） |
+
+### 22.3 会话隔离（D-022）
+
+```
+agent/created ──► 为该 agent 注册 complete 段（agent.ctx.systemPrompt.section）
+                    text: () => 该会话的 systemText + depthText + 开场白块
+agent/inbox/inserted ──► turn += 1；应用信封绑定（卡/预设/变量/开场白）→ 重算
+（system-prompt 组装读函数 → 拿到的是本会话的最新文本）
+agent/pre-step ──► 剥离信封 + 用户输入正则（placement=1）
+```
+
+- 段注册在 `agent.ctx` 上：只对该 agent 生效，agent 释放时自动撤销；
+- `turn` 参与重算 key：`sticky/cooldown/delay` 必须每回合推进；
+- 绑定应用在 `agent/inbox/inserted`（时间早于组装）；`agent/pre-step` 只是兜底，因为 DSH 先 assemble 再发 pre-step（`dsh-agent-loop/src/agent.ts` 300/303 行）。
+
+### 22.4 世界书语义补全（D-025）
+
+判定顺序（照 ST 的顺序，见 §14.2）：`禁用 → 装饰器（@@dont_activate/@@if）→ 装饰器强制（@@activate）→ delay → cooldown → delayUntilRecursion → sticky 命中 → constant → 主关键词 → 次关键词`。
+
+批处理：`sticky 优先 + 原序 → inclusion group 过滤（跨轮占位）→ 概率（sticky 不重掷、失败不重试）→ 预算（ignoreBudget 例外）`。
+
+递归：本轮新激活的正文并入下一轮扫描文本；`maxRecursionSteps` 默认 5，`excludeRecursion` 的条目在递归轮不参与关键词匹配。
+
+计时单位 `session.turn` = 带信封的用户消息数（近似 ST 的聊天消息条数），每局一份 `createWorldInfoSession()`。
+
+### 22.5 prompt 作用域正则（D-023）
+
+| placement | 当前位置 | 说明 |
+|---|---|---|
+| 1 USER_INPUT | ✅ Host `agent/pre-step` | 应用于用户正文（信封剥离之后） |
+| 5 WORLD_INFO | ✅ Host `decorateEntry` | 装饰器之后、进桶之前 |
+| 2 AI_OUTPUT（prompt 侧） | ⛔ 不可行 | 需要重写 assistant 历史，`agent/request` 不允许 |
+| 2 AI_OUTPUT（显示侧） | ✅ 客户端 | `applyDisplayRegex` |
+
+参考资产实测：预设 28 条正则（1 条 `placement=[1] promptOnly`、1 条 `placement=[1] markdownOnly`，其余 `[2]`），三张卡各 2 条 `[1]`、30–40 条 `[2]`，**没有 `[5]`**。所以 placement=2 的历史改写是当前最大的语义缺口，而它只能等 Shadow Chat。
+
+### 22.6 工具链
+
+```powershell
+node tools/snapshot.mjs                       # 资产 → build/snapshot.json
+node tools/build-client.mjs                   # 注入快照/核心/shim → plugin/client.js
+node tests/run.mjs                            # 117 个用例（单进程，绕开沙箱 spawn EPERM）
+node tools/check.mjs                          # 管线自检（激活数/分桶/注入/残留）
+node tools/install.mjs status|install|uninstall [--profile <名字>] [--profile-dir <路径>]
+node tools/verify-e2e.mjs "http://127.0.0.1:PORT/?token=…"   # 对运行中的实例做端到端验证
+```
+
+`tests/` 用合成夹具（V3/V2 卡、预设、对象式世界书），**不依赖 `参考/` 里的私有大文件**；`node --test` 在本机会因沙箱禁止子进程管道而 `spawn EPERM`，所以用 `tests/run.mjs` 单进程加载。
+
+### 22.7 实测证据（本机，2026-11-15）
+
+| 项 | 结果 |
+|---|---|
+| 管线（春日狂想曲 + 预设） | 世界书 23/114、30,495 tokens、递归 1 轮；system 43,366 + 深度注入 1,299 = **44,667 字**；EJS 残留 0、装饰器残留 0 |
+| 会话隔离 | 两个 agent 绑不同卡：A 的段只含 A 的卡与开场白，B 同理（`tests/agent.test.mjs`） |
+| 实机 e2e（`desktop-verify` profile + `dsh web`） | `system/message` **44,705 字** = 本地引擎同一输入的输出（+38 字开场白块）；`user/message` 中正文 `测试正文`、全库无 `\0TT\0` 信封；`agentPreset=roleplay` 生效 |
+| 安装 | `desktop` profile：junction → `C:\coding\dsh-tt\plugin`、补丁 59 行、`require.resolve` 指向 `plugin/index.js`；重启后生效 |
+| 客户端静态 | `plugin/client.js` 211.4 KB；假 React 渲染 Panel 首屏无异常（`tests/client-render.test.mjs`） |
+
+### 22.8 未完成与边界
+
+| 优先级 | 项 | 落点 |
+|---|---|---|
+| P0 | **完全退出并重开 DSH 后，实机验证新面板（开场白选择器等）** | 用户侧动作；`C:\coding\dsh-tt` 已装进 desktop profile |
+| P1 | TH 在真实浏览器里跑 MVU | 面板「扩展」→ 脚本界面；`stat_data` 是否出现 |
+| P2 | Shadow Chat（真正改写历史） | 解锁 placement=2 的 prompt 正则、@depth 逐消息插入、swipe/编辑/删除；需要 Host 侧生成桥或 DSH 新 API |
+| P2 | TH `generate`/`generateRaw` | 需要不经过 roleplay 接管的生成通道 |
+| P3 | 群聊、分支、采样参数透传、远程脚本缓存 | §7 M4/M5 |
+
+
+
 ## 附录 A：事实出处（当前安装）
 
 基址：`C:\Users\Administrator\AppData\Local\Programs\DeepSeek Harness\resources\app.asar\dsh\node_modules\@deepseek-ai\`
@@ -1313,3 +1416,5 @@ session.append('user/message', 剥离后的消息)  ← 日志只有原文
 | v0.8 | 2026-11-14 | 读完剩余源码：补 §14.6 宏三段求值与完整宏表（含 `{{//}}`、`{{trim}}` 两个坑）、§14.7 swipe 数据模型与 overswipe、§14.8 STScript 注册方式与常用命令行号、§14.9 预设无版本号需宽容导入；`Floor.variants` 升级为带元数据的 `FloorVariant[]`；新增 R15（ST 字段漂移） |
 | v0.9 | 2026-11-14 | **v1 开工并构建完成**：Host 资产引擎（PNG/V3 解析、世界书激活、宏、ST 顺序提示词组装）+ 零工具 `roleplay` 预设 + 客户端工作台面板；新增 §15 实现记录、文件地图、能力边界、未验证项与缺口 |
 | v1.0 | 2026-11-15 | **v1.1 接管打通与 TH 宿主**：新增 §21 与 D-017..D-021；Host 拆 root/agent（`inject=['systemPrompt']`）、`inbox/inserted` + `pre-step` 信封剥离、固定内置段 + `prompt_order`、跨块 EJS、资产改为 `workspaceFiles` 按需读取、TH iframe 宿主（core/shim）、世界书/预设查看与启停、输出侧 EJS；实机会话验证 system 含绑定变量与开场白、user 日志只剩正文 |
+| v1.1 | 2026-11-15 | **v0.3：会话隔离与语义补全**：新增 §22 与 D-022..D-025；提示词段搬到 `agent.ctx`（每会话一份）、资产路径推导、世界书递归/sticky/cooldown/delay/inclusion group/outlet/`@@` 前置判定、prompt 侧正则 placement 1/5、开场白选择器、`tests/`+`tools/install.mjs`+`tools/check.mjs`+`tools/verify-e2e.mjs`；实测有效提示词 44,667 字、实机 system 44,705 字、信封不泄漏 |
+

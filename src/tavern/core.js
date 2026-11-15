@@ -729,8 +729,9 @@ var TT_CORE = (function () {
       out = out.replace(/\{\{newline\}\}/gi, '\n');
       out = out.replace(/(?:\r?\n)*\{\{trim\}\}(?:\r?\n)*/gi, '');
       out = out.replace(/\{\{noop\}\}/gi, '');
-      out = out.replace(/\{\{([a-zA-Z_][\w]*)\}\}/g, function (raw, name) {
-        var value = lookupMacro(name);
+      // 自定义宏名不受 ASCII 限制（酒馆助手的 registerMacroLike 允许任意名字）。
+      out = out.replace(/\{\{([^{}]+)\}\}/g, function (raw, name) {
+        var value = lookupMacro(String(name).trim());
         return value === undefined ? raw : String(value);
       });
       // 旧式尖括号
