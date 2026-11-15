@@ -10,6 +10,9 @@ window.__ModuleLoader__.load({
     const SNAPSHOT = __SNAPSHOT__;
     const TAVERN_CORE_SRC = __TAVERN_CORE__;
     const TAVERN_SHIM_SRC = __TAVERN_SHIM__;
+    const TAVERN_ZOD_SRC = __TAVERN_ZOD__;
+    const WASM_PROTOTYPE_BASE64 = __WASM_PROTOTYPE__;
+    /* __WASM_ADAPTER__ */
     const TT_LIB_SRC = __TT_LIB__;
     const STORE_KEY = 'dsh-tt:v3';
     const TH_KEY = 'dsh-tt:th:v1';
@@ -817,7 +820,7 @@ window.__ModuleLoader__.load({
     function buildTavernSrcdoc(init) {
       const safeJson = JSON.stringify(init).replace(/</g, '\\u003c');
       const core = String(TAVERN_CORE_SRC).replace(/<\/script/gi, '<\\/script');
-      const shim = String(TAVERN_SHIM_SRC).replace(/<\/script/gi, '<\\/script');
+      const shimLiteral = JSON.stringify(String(TAVERN_SHIM_SRC)).replace(/</g, '\\u003c');
       return [
         '<!doctype html><html><head><meta charset="utf-8">',
         '<style>html,body{margin:0;padding:0;background:#fff;color:#1c1c1e;font:13px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}',
@@ -826,7 +829,7 @@ window.__ModuleLoader__.load({
         '<div id="chat"></div><div id="extensions_settings"></div><div id="tt-fallback">TH 脚本界面</div>',
         `<script>window.__TT_INIT__ = ${safeJson};<\/script>`,
         `<script>${core}<\/script>`,
-        `<script>${shim}<\/script>`,
+        `<script type="module">import('data:text/javascript;base64,${TAVERN_ZOD_SRC}').then(function(zod){ window.z = zod; var script = document.createElement('script'); script.textContent = ${shimLiteral}; document.body.appendChild(script); }).catch(function(error){ window.parent.postMessage({__ttChild:true,tt:'log',level:'error',text:'酒馆助手 Zod 4 加载失败：' + String(error)}, '*'); });<\/script>`,
         '</body></html>',
       ].join('\n');
     }
@@ -1261,6 +1264,7 @@ window.__ModuleLoader__.load({
             creator: inner.creator || '',
             character_version: inner.character_version || inner.characterVersion || '',
             tags: inner.tags || [],
+            character_book: cardBook(activeCardRaw),
             extensions: sanitizeExtensions(inner.extensions || {}),
           },
         };
@@ -1496,6 +1500,18 @@ window.__ModuleLoader__.load({
       const runSelfTest = useCallback(() => {
         const checks = [];
         const add = (label, ok, detail) => checks.push({ label, ok: Boolean(ok), detail: detail == null ? '' : String(detail) });
+        try {
+          if (!WASM_PROTOTYPE_BASE64) throw new Error('构建时未包含 WASM 原型');
+          const binary = atob(WASM_PROTOTYPE_BASE64);
+          const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+          const probe = createCardLengthPrototype(bytes);
+          const samples = ['', '角色卡😀', '\ud800'];
+          const matches = samples.every((text) => probe.length(text) === text.length);
+          add('浏览器 WASM 原型', probe.mode === 'wasm' && matches,
+            probe.mode === 'wasm' && matches ? '加载和 Unicode 计算通过' : (probe.error || '计算结果不一致'));
+        } catch (error) {
+          add('浏览器 WASM 原型', false, String(error?.message || error));
+        }
         try {
           add('会话通道', bridge?.ok, bridge?.ok ? 'ctx.remote.session 可用' : 'ctx.remote.session 不可用');
           add('资产读取通道', bridge?.hasFiles, bridge?.hasFiles ? 'workspaceFiles 可用' : 'workspaceFiles 不可用（卡片正文读不到）');
@@ -1947,14 +1963,14 @@ window.__ModuleLoader__.load({
 
       const extPane = h('div', { className: 'tt-pane' },
         h('h2', { className: 'tt-h' }, '扩展'),
-        h('p', { className: 'tt-sub' }, '酒馆助手（JS-Slash-Runner）以只读兼容层内置运行；提示词模板由 Host 的 EJS 引擎承担。'),
+        h('p', { className: 'tt-sub' }, '酒馆助手兼容宿主：管理卡内脚本并使用脚本按钮。提示词模板由内置 EJS 引擎承担。'),
         h('div', { className: 'tt-inline', style: { marginBottom: '12px' } },
           h('button', { className: 'tt-btn', onClick: () => setThShow(true) }, '打开脚本界面'),
           h('button', { className: 'tt-btn', onClick: () => setThReload((tick) => tick + 1) }, '重启宿主'),
           h('button', { className: 'tt-btn', onClick: () => { updateTh((prev) => ({ ...prev, messages: { ...(prev.messages || {}), [activeId]: {} }, overrides: { ...(prev.overrides || {}), [activeId]: {} } })); } }, '清空本局变量'),
           h('span', { className: 'tt-note' }, thReady ? '宿主运行中' : (cardScripts.length ? '宿主未启动（检查卡/会话）' : '这张卡没有 TH 脚本')),
         ),
-        h('div', { className: 'tt-section' }, `卡内脚本（${enabledScripts.length}/${cardScripts.length} 启用）`),
+        h('div', { className: 'tt-section' }, `酒馆助手 · 卡内脚本设置（${enabledScripts.length}/${cardScripts.length} 启用）`),
         cardScripts.length === 0
           ? h('div', { className: 'tt-note' }, '当前卡没有 extensions.tavern_helper.scripts。')
           : cardScripts.map((script) => h('div', { key: script.id, className: 'tt-line' },
@@ -1977,6 +1993,9 @@ window.__ModuleLoader__.load({
           h('span', { className: 'tt-note' }, statData ? `${Object.keys(statData).length} 个顶层键` : '还没有 stat_data（等 MVU 初始化）'),
         ),
         varOpen ? h('pre', { className: 'tt-pre' }, JSON.stringify(ttVars, null, 2).slice(0, 40000)) : null,
+        h('div', { className: 'tt-section' }, '提示词模板（ST-Prompt-Template）'),
+        h('div', { className: 'tt-note' }, 'EJS 模板由内置兼容引擎处理；目前没有可配置的扩展设置。'),
+        h('div', { className: 'tt-note', style: { marginTop: 8 } }, '当前为兼容实现，尚未接入酒馆助手或提示词模板的原版设置面板。'),
         h('p', { className: 'tt-note', style: { marginTop: '12px' } },
           '安全提示：脚本与 JS-Slash-Runner 同级别，可读取本局聊天与变量。宿主使用 iframe 隔离，但为了兼容 TH 的 window.parent 偏好存储，iframe 与页面同源；只运行你自己信任的角色卡脚本。'),
       );

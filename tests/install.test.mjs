@@ -39,8 +39,7 @@ test('install：建联接 + 追加补丁 + 写标记，且可重复执行', () =
   assert.equal(after.link.pointsToThisRepo, true);
   assert.equal(after.patchHasInstall, true);
   assert.equal(after.resolve.ok, true, after.resolve.error);
-  // 解析路径穿过 profile 的联接；指向本仓库 plugin 下的文件。
-  assert.match(after.resolve.rootPath.replace(/\\/g, '/'), /profile-under-test\/node_modules\/@dsh-tt\/roleplay\/index\.js$/);
+  // Node 在不同环境可能保留联接路径，也可能返回解析后的真实路径。
   assert.equal(fs.readFileSync(after.resolve.rootPath, 'utf8'), fs.readFileSync(path.join(pluginDir, 'index.js'), 'utf8'));
 
   const patch1 = fs.readFileSync(path.join(profileDir, 'cordis.patch.yml'), 'utf8');
