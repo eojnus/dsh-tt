@@ -273,6 +273,11 @@ Remove-Item "$env:USERPROFILE\.dsh\profiles\desktop-verify" -Recurse -Force
 - 本轮提交：
   - **`9ac47ed`** — `feat(v0.3): 会话隔离的提示词段 + 路径解耦 + 测试/安装/验证脚手架`
   - **`55c246a`** — `feat(lorebook+regex): 世界书递归/计时/分组/outlet，prompt 作用域正则接入`
-  - 随后是文档提交（`DESIGN.md` §22 + 本文件）。
+  - **`5383555`** — `docs: 会话 30 记录（DESIGN §22 + D-022..D-025，HANDOFF 全面更新）`
+  - **`91dec40`** — `feat(preview): 面板「预览」页 —— 与 Host 同源的提示词管线同构包`
+  - **`c08f934`** — `feat(panel): 正则页 + 设置页自检；测试真正渲染每个页签`
+  - **`34d7696`** — `feat(inspect): 卡体检/TH 脚本盘点/远程依赖核对 + 资源加载失败诊断`
 - 仓库已配置本地身份 `dsh-tt <dsh-tt@local>`（本机没有全局 git 配置）。
+- 最后一次实机 e2e（`desktop-verify` + `dsh web --port 7788`，最新代码）：`system 44,705 字`、
+  `user/message` 正文 `测试正文`、无信封、无 EJS/装饰器残留，**全部通过**；验证后 profile 已删除。
 - 仍未验证的接口形状：`session/list` 的 `value` 精确形状（代码兼容 `sessions`/`rows`/`items`/数组）、`session/selectModel` 的入参（代码尝试 `{sessionId, provider, model}` 与 `{sessionId, selection}`）。
