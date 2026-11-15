@@ -65,6 +65,67 @@ function renderTree(node, React) {
   return { tag: type, props, children: renderTree(props?.children, React) };
 }
 
+/** 收集渲染树里的文本（用于断言页签内容）。 */
+function collectText(node) {
+  if (node == null || node === false || node === true) return '';
+  if (typeof node === 'string' || typeof node === 'number') return String(node) + '\n';
+  if (Array.isArray(node)) return node.map(collectText).join('');
+  if (typeof node === 'object' && node.children !== undefined) return collectText(node.children);
+  return '';
+}
+
+test('client.js：每个页签都能渲染（含预览/正则/设置/扩展）', async () => {
+  const source = fs.readFileSync(CLIENT, 'utf8');
+  let captured = null;
+  const stubs = {
+    window: { __ModuleLoader__: { load(definition) { captured = definition; } } },
+    localStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} },
+  };
+  const saved = {};
+  for (const key of Object.keys(stubs)) {
+    saved[key] = globalThis[key];
+    globalThis[key] = stubs[key];
+  }
+  try {
+    await import(pathToFileURL(CLIENT).href + '?views=' + Date.now());
+    const { React } = makeReact();
+    const module = captured.factory((name) => {
+      if (name === 'react') return React;
+      throw new Error('意外的 require：' + name);
+    });
+    const registered = [];
+    const ctx = {
+      remote: {},
+      slots: {
+        inject(slot, produce) { registered.push({ slot, produce }); },
+        // 与宿主一致：register(slotProps, component) 返回登记句柄；
+        // 真正的渲染元素 = component(slotProps)。
+        register(slotProps, component) { return { slotProps, component }; },
+      },
+    };
+    module.apply(ctx);
+    const main = registered.find((item) => item.slot === 'main');
+    assert.ok(main);
+
+    for (const view of ['chat', 'cards', 'lore', 'presets', 'preview', 'regex', 'extensions', 'settings']) {
+      const registration = main.produce();
+      assert.ok(registration && registration.component, `页签 ${view}：main 槽位应当登记组件`);
+      const tree = renderTree(registration.component({ __initialView: view }), React);
+      assert.ok(tree, `页签 ${view} 应当渲染出元素树`);
+      const text = collectText(tree);
+      assert.ok(text.length > 120, `页签 ${view} 的渲染结果看起来是空的（${text.length} 字）`);
+      if (view === 'preview') assert.match(text, /发送前预览/);
+      if (view === 'regex') assert.match(text, /正则脚本/);
+      if (view === 'settings') assert.match(text, /设置与诊断/);
+      if (view === 'presets') assert.match(text, /预设/);
+      if (view === 'chat') assert.match(text, /新建对话|对话/);
+    }
+    assert.ok(source.includes('dsh-tt:v3'));
+  } finally {
+    for (const key of Object.keys(saved)) globalThis[key] = saved[key];
+  }
+});
+
 test('client.js：模块注册、apply 注册槽位、Panel 首屏可渲染', async () => {
   assert.ok(fs.existsSync(CLIENT), 'plugin/client.js 不存在，先运行 node tools/build-client.mjs');
   const source = fs.readFileSync(CLIENT, 'utf8');
@@ -105,12 +166,15 @@ test('client.js：模块注册、apply 注册槽位、Panel 首屏可渲染', as
     const sidebar = registered.find((item) => item.slot === 'sidebar.panellist');
     assert.ok(main && sidebar);
 
-    const icon = renderTree(sidebar.produce(), React);
+    const iconRegistration = sidebar.produce();
+    const icon = renderTree(iconRegistration.component(iconRegistration.slotProps), React);
     assert.ok(icon, '侧栏图标应当渲染');
 
-    const element = main.produce();
-    const tree = renderTree(element, React);
+    const registration = main.produce();
+    assert.ok(registration && registration.component, 'main 槽位应当登记组件');
+    const tree = renderTree(registration.component(registration.slotProps || {}), React);
     assert.ok(tree, 'Panel 应当产出元素树');
+    assert.match(collectText(tree), /角色扮演|对话|角色/, '首屏应当有面板文本');
     assert.ok(source.includes('dsh-tt:v3'), '客户端包应当带主 store 键');
   } finally {
     for (const key of Object.keys(saved)) globalThis[key] = saved[key];

@@ -914,7 +914,8 @@ window.__ModuleLoader__.load({
     function Panel(props) {
       const ctxRef = useRef(props && props.__ctx ? props.__ctx : null);
       const [store, setStore] = useState(loadStore);
-      const [view, setView] = useState('chat');
+      // __initialView 只给冒烟测试用（默认 chat）。
+      const [view, setView] = useState(props && props.__initialView ? props.__initialView : 'chat');
       const [sessions, setSessions] = useState([]);
       const [activeId, setActiveId] = useState(null);
       const [floors, setFloors] = useState([]);
@@ -940,6 +941,7 @@ window.__ModuleLoader__.load({
       const [varOpen, setVarOpen] = useState(false);
       const [previewSearch, setPreviewSearch] = useState('');
       const [previewCopyHint, setPreviewCopyHint] = useState('');
+      const [selfTest, setSelfTest] = useState(null);
 
       const chatRef = useRef(null);
       const scrollRef = useRef(null);
@@ -1445,7 +1447,7 @@ window.__ModuleLoader__.load({
           return { status: 'error', message: String((error && (error.stack || error.message)) || error) };
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
-      }, [view, assetTick, ttTick, activeCardRaw, activePresetRaw, activePreset, presetOverridesOf, ttVars, greeting]);
+      }, [view, assetTick, thTick, activeCardRaw, activePresetRaw, activePreset, presetOverridesOf, ttVars, greeting]);
 
       const previewRows = useMemo(() => {
         if (previewState.status !== 'ok') return [];
@@ -1488,6 +1490,51 @@ window.__ModuleLoader__.load({
           ? rows.filter((row) => String(row.comment || '').toLowerCase().includes(needle))
           : rows;
       }, [previewState, previewSearch]);
+
+      // ── 自检 ────────────────────────────────────────────────
+      // 重启后一键确认：通道、资产、管线、TH 宿主四条链路是否都活着。
+      const runSelfTest = useCallback(() => {
+        const checks = [];
+        const add = (label, ok, detail) => checks.push({ label, ok: Boolean(ok), detail: detail == null ? '' : String(detail) });
+        try {
+          add('会话通道', bridge?.ok, bridge?.ok ? 'ctx.remote.session 可用' : 'ctx.remote.session 不可用');
+          add('资产读取通道', bridge?.hasFiles, bridge?.hasFiles ? 'workspaceFiles 可用' : 'workspaceFiles 不可用（卡片正文读不到）');
+          add('角色卡已加载', Boolean(activeCard), activeCard ? activeCard.name : '还没选卡');
+          add('角色卡正文', Boolean(activeCardRaw), activeCardRaw ? `${(JSON.stringify(activeCardRaw).length / 1024).toFixed(1)} KB` : '正文未加载');
+          add('预设已加载', Boolean(activePreset), activePreset ? activePreset.name : '没有预设');
+          add('当前是角色扮演局', isRoleplaySession, isRoleplaySession ? '有 sessionMeta / RP · 前缀' : '普通 DSH 会话（只读）');
+          add('TH 宿主', Boolean(thReady), thReady ? '已就绪' : '未启动（没有启用的脚本或未进局）');
+
+          if (activeCardRaw) {
+            const lib = ttLib();
+            const card = lib.card.normalizeCard(activeCardRaw);
+            const presetBase = activePresetRaw ? lib.prompt.parsePreset(activePresetRaw) : null;
+            const overrides = activePreset?.id ? { prompts: presetOverridesOf(activePreset.id) } : null;
+            const preset = presetBase && overrides ? lib.prompt.applyPresetOverrides(presetBase, overrides) : presetBase;
+            const result = lib.pipeline.runPromptPipeline({
+              card, preset, variables: ttVars, greeting, userName: '你',
+              maxContext: PREVIEW_MAX_CONTEXT, worldInfoBudget: PREVIEW_WI_BUDGET,
+            });
+            add('世界书条目', result.lorebook.stats.total > 0, `${result.lorebook.stats.total} 条`);
+            add('世界书激活', result.lorebook.stats.activated > 0,
+              `${result.lorebook.stats.activated} 条 · ${result.lorebook.stats.tokens} tokens · 递归 ${result.lorebook.stats.recursion} 轮`);
+            add('system 段非空', result.systemText.length > 0, `${result.systemText.length} 字`);
+            add('无 EJS 残留', !/<%|%>/.test(result.sectionText), (result.sectionText.match(/<%/g) || []).length + ' 处');
+            add('无装饰器残留', !/@@(if|activate|dont_activate)/.test(result.sectionText));
+            add('无 EJS 错误', result.errors.ejs.length === 0, result.errors.ejs[0] || '');
+            add('无正则错误', result.errors.regex.length === 0, result.errors.regex[0] || '');
+            add('音色数量', true, `${result.entries.length} 条条目 · ${result.regexRules.length} 条正则`);
+          } else {
+            add('管线', false, '没有卡正文，跳过管线自检');
+          }
+        } catch (error) {
+          add('自检过程抛错', false, String((error && (error.message || error)) || error));
+        }
+        setSelfTest({ at: new Date().toLocaleTimeString(), checks });
+        const failed = checks.filter((check) => !check.ok).length;
+        log(`自检：${checks.length - failed}/${checks.length} 通过` + (failed ? `，${failed} 项失败` : ''));
+      }, [bridge, activeCard, activeCardRaw, activePreset, activePresetRaw, isRoleplaySession, thReady,
+        presetOverridesOf, ttVars, greeting, log]);
 
       const buildBinding = useCallback(() => {
         const card = activeCard;
@@ -1664,7 +1711,7 @@ window.__ModuleLoader__.load({
             )),
         ),
         h('div', { className: 'tt-tabs' },
-          [['chat', '对话'], ['cards', '角色'], ['lore', '世界书'], ['presets', '预设'], ['preview', '预览'], ['extensions', '扩展'], ['settings', '设置']].map(([key, label]) =>
+          [['chat', '对话'], ['cards', '角色'], ['lore', '世界书'], ['presets', '预设'], ['preview', '预览'], ['regex', '正则'], ['extensions', '扩展'], ['settings', '设置']].map(([key, label]) =>
             h('button', {
               key, className: 'tt-tab' + (view === key ? ' on' : ''),
               onClick: () => setView(key),
@@ -1941,7 +1988,19 @@ window.__ModuleLoader__.load({
         h('div', { className: 'tt-inline', style: { marginBottom: '10px' } },
           h('button', { className: 'tt-btn', onClick: refreshSessions }, '重新读取会话'),
           h('button', { className: 'tt-btn', onClick: () => setDiag([]) }, '清空诊断'),
+          h('button', { className: 'tt-btn', onClick: runSelfTest }, '运行自检'),
+          selfTest ? h('span', { className: 'tt-note' },
+            `${selfTest.at} · ${selfTest.checks.filter((check) => check.ok).length}/${selfTest.checks.length} 通过`) : null,
         ),
+        selfTest ? h('div', { style: { marginBottom: '10px' } },
+          selfTest.checks.map((check, index) => h('div', {
+            key: index,
+            style: { fontSize: 11.5, lineHeight: 1.85, display: 'flex', gap: 6, alignItems: 'baseline' },
+          },
+            h('span', { style: { width: 14, flex: 'none' } }, check.ok ? '✅' : '❌'),
+            h('span', { style: { minWidth: 108, flex: 'none', opacity: 0.72 } }, check.label),
+            h('span', { style: { flex: 1, minWidth: 0, wordBreak: 'break-word' } }, check.detail),
+          ))) : null,
         h('div', { className: 'tt-note', style: { marginBottom: '8px' } },
           `session remote: ${bridge?.ok ? '可用' : '不可用'} · workspaceFiles: ${bridge?.hasFiles ? '可用' : '不可用'} · 会话数 ${sessions.length} · 模型 ${models.length} · TH ${thReady ? '运行中' : '未运行'}`),
         h('div', { className: 'tt-note', style: { marginBottom: '8px' } },
@@ -2057,11 +2116,82 @@ window.__ModuleLoader__.load({
           '开场白只显示、不发送；深度注入按 D-020 追加在末尾。'),
         previewBody());
 
+      // ── 正则 ────────────────────────────────────────────────
+      const regexState = useMemo(() => {
+        if (view !== 'regex') return { status: 'idle' };
+        try {
+          const lib = ttLib();
+          const cardRules = lib.regex.collectRegexRules(activeCardRaw, null).map((rule) => ({ ...rule, source: '卡' }));
+          const presetRules = lib.regex.collectRegexRules(null, activePresetRaw).map((rule) => ({ ...rule, source: '预设' }));
+          return { status: 'ok', rows: [...cardRules, ...presetRules] };
+        } catch (error) {
+          return { status: 'error', message: String((error && (error.message || error)) || error) };
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [view, assetTick, activeCardRaw, activePresetRaw]);
+
+      const placementName = (value) => ({
+        1: '用户输入',
+        2: 'AI 输出',
+        3: '斜杠命令',
+        4: '仅显示',
+        5: '世界书',
+        6: '推理',
+      }[Number(value)] || String(value));
+
+      const regexPane = h('div', { className: 'tt-pane' },
+        h('h2', { className: 'tt-h' }, '正则脚本'),
+        h('p', { className: 'tt-sub' },
+          'ST 的 regex_scripts：显示侧在面板渲染时生效；提示词侧当前只做 placement=1（用户输入）与 5（世界书），' +
+          'placement=2 的 prompt 规则需要改写 assistant 历史，暂不支持。'),
+        regexState.status === 'error'
+          ? h('div', { className: 'tt-note', style: { color: '#c00' } }, regexState.message)
+          : regexState.status !== 'ok'
+            ? h('div', { className: 'tt-note' }, '打开本页即可读取规则…')
+            : (() => {
+              const rows = regexState.rows;
+              const disabled = rows.filter((row) => row.disabled).length;
+              return h('div', null,
+                h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10 } },
+                  previewChip('合计', `${rows.length} 条`),
+                  previewChip('启用', `${rows.length - disabled}`),
+                  previewChip('卡内', `${rows.filter((row) => row.source === '卡').length}`),
+                  previewChip('预设', `${rows.filter((row) => row.source === '预设').length}`)),
+                rows.map((row, index) => {
+                  const promptSide = !row.disabled && (!row.markdownOnly || row.promptOnly);
+                  const displaySide = !row.disabled && (!row.promptOnly || row.markdownOnly);
+                  const where = [];
+                  if (promptSide && row.placement.includes(1)) where.push('用户输入');
+                  if (promptSide && row.placement.includes(5)) where.push('世界书');
+                  if (promptSide && row.placement.includes(2)) where.push('助手历史（暂不支持）');
+                  if (displaySide && row.placement.includes(2)) where.push('显示');
+                  return h('div', {
+                    key: row.id + ':' + index,
+                    className: 'tt-card',
+                    style: { padding: '8px 10px', marginBottom: 6, opacity: row.disabled ? 0.5 : 1 },
+                  },
+                    h('div', { style: { display: 'flex', gap: 8, alignItems: 'baseline', marginBottom: 4 } },
+                      h('span', { className: 'tt-badge' }, row.source),
+                      h('b', { style: { fontSize: 12.5 } }, row.name),
+                      h('div', { className: 'tt-spacer' }),
+                      h('span', { className: 'tt-note' }, row.disabled ? '已禁用' : (where.join(' / ') || '不生效'))),
+                    h('div', { className: 'tt-note', style: { fontFamily: 'var(--dsw-font-family-mono, ui-monospace, monospace)', fontSize: 11 } },
+                      `${row.findRegex || '(空)'}  →  ${JSON.stringify(row.replaceString || '')}`),
+                    h('div', { className: 'tt-note' },
+                      `placement ${JSON.stringify(row.placement)}` +
+                      (row.markdownOnly ? ' · markdownOnly' : '') +
+                      (row.promptOnly ? ' · promptOnly' : '') +
+                      (row.minDepth != null ? ` · 深度 ${row.minDepth}~${row.maxDepth ?? '∞'}` : '')),
+                  );
+                }));
+            })());
+
       const pane = view === 'cards' ? cardsPane
         : view === 'lore' ? lorePane
           : view === 'presets' ? presetsPane
             : view === 'preview' ? previewPane
-              : view === 'extensions' ? extPane
+              : view === 'regex' ? regexPane
+                : view === 'extensions' ? extPane
                 : view === 'settings' ? settingsPane
                   : chatPane;
 
@@ -2268,8 +2398,10 @@ window.__ModuleLoader__.load({
         try {
           ctx.slots.inject('main', () => ctx.slots.register(
             { name: 'main', key: 'roleplay' },
-            () => h('div', { style: { height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column' } },
-              h(Boundary, null, h(Panel, { __ctx: ctx }))),
+            // 把槽位传入的 props 透传给 Panel：宿主目前不传业务 props，
+            // 但测试可以借 `__initialView` 把面板渲染到指定页签。
+            (slotProps) => h('div', { style: { height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column' } },
+              h(Boundary, null, h(Panel, { __ctx: ctx, __initialView: slotProps && slotProps.__initialView }))),
           ));
           ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
             name: 'sidebar.panellist', id: 'roleplay', order: 20, label: () => '角色扮演',
