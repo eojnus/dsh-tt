@@ -10,12 +10,8 @@ const projectRoot = path.resolve(here, '..');
 const assetRoot = process.argv[2] || projectRoot;
 const load = (relative) => import(pathToFileURL(path.join(projectRoot, relative)).href);
 
-const { loadLibrary, bookEntriesOf, resolveActive } = await load('plugin/lib/library.js');
-const { activateEntries } = await load('plugin/lib/lorebook.js');
-const { renderPrompt } = await load('plugin/lib/prompt.js');
-const { createMacroEnv } = await load('plugin/lib/macros.js');
-const { createEjsScope } = await load('plugin/lib/ejs.js');
-const { applyWorldInfoDecorators } = await load('plugin/lib/decorators.js');
+const { loadLibrary, resolveActive } = await load('plugin/lib/library.js');
+const { runPromptPipeline } = await load('plugin/lib/pipeline.js');
 
 const roots = [path.join(assetRoot, '参考'), path.join(assetRoot, 'assets')];
 const library = loadLibrary(roots);
@@ -25,40 +21,23 @@ let activeSnapshot = null;
 
 if (active) {
   const card = active.card;
-  const scanText = [card.description, card.firstMes, ...(card.alternateGreetings ?? []).slice(0, 3), card.scenario]
-    .filter(Boolean).join('\n');
-  const entries = bookEntriesOf(card);
-  const env = createMacroEnv({ card, userName: '你', maxPrompt: 128000, maxContext: 200000 });
-  const lorebookByName = new Map();
-  const ejsScope = createEjsScope({}, {
-    getwi: (name) => lorebookByName.get(name) ?? '',
-    getchar: () => card.name,
-    resolve: (key) => (env && key in env ? env[key] : undefined),
-  });
-  const lorebook = activateEntries({
-    entries,
-    scanText,
-    budget: Number(process.env.DSH_TT_WI_BUDGET) || 32000,
-    decorateEntry: (entry) => applyWorldInfoDecorators(entry.content, ejsScope),
-  });
-  for (const entry of lorebook.activated) lorebookByName.set(entry.comment, entry.content);
   const preset = library.presets[0]?.preset ?? null;
-  const rendered = renderPrompt({ card, preset, lorebook, env, ejsScope });
-  const systemText = [rendered.system, rendered.tail].filter(Boolean).join('\n\n');
-  // 模型实际看到的 system 段：agent.js 会把深度/绝对注入按深度降序追加在 system 末尾。
-  const depthText = [...rendered.injected, ...rendered.depth]
-    .sort((a, b) => (Number(b.depth) || 0) - (Number(a.depth) || 0))
-    .map((item) => item.content)
-    .join('\n\n');
-  const effective = [systemText, depthText].filter(Boolean).join('\n\n');
+  const result = runPromptPipeline({
+    card,
+    preset,
+    userName: '你',
+    maxContext: 200000,
+    worldInfoBudget: Number(process.env.DSH_TT_WI_BUDGET) || 32000,
+  });
+  const { lorebook, systemText, sectionText } = result;
 
   activeSnapshot = {
     cardId: active.id,
     presetName: preset?.name ?? null,
     systemLength: systemText.length,
-    effectiveLength: effective.length,
-    depthGroups: rendered.depth.length,
-    injectedCount: rendered.injected.length,
+    effectiveLength: sectionText.length,
+    depthGroups: result.rendered.depth.length,
+    injectedCount: result.rendered.injected.length,
     systemPreview: systemText.slice(0, 4000),
     truncated: systemText.length > 4000,
     worldInfo: {
@@ -66,6 +45,7 @@ if (active) {
       activated: lorebook.stats.activated,
       tokens: lorebook.stats.tokens,
       budget: lorebook.stats.budget,
+      recursion: lorebook.stats.recursion,
       constants: lorebook.activated.filter((entry) => entry.constant).length,
       matched: lorebook.activated.filter((entry) => !entry.constant).map((entry) => entry.comment).filter(Boolean).slice(0, 12),
       skipped: lorebook.skipped.slice(0, 12),
@@ -88,7 +68,6 @@ const snapshot = {
     file: path.basename(entry.file),
     filePath: entry.file,
     ...entry.summary,
-    // 面板只用这些元数据；正文由客户端按需从磁盘读。
     hasFilePath: true,
   })),
   presets: library.presets.map((entry) => ({
@@ -115,5 +94,8 @@ fs.writeFileSync(path.join(outDir, 'snapshot.json'), JSON.stringify(snapshot, nu
 console.log(
   `snapshot: cards=${snapshot.counts.cards} presets=${snapshot.counts.presets} ` +
   `lorebooks=${snapshot.counts.lorebooks} errors=${snapshot.counts.errors}` +
-  (activeSnapshot ? ` | active=${activeSnapshot.cardId} wi=${activeSnapshot.worldInfo.activated}/${activeSnapshot.worldInfo.total} sys=${activeSnapshot.systemLength}` : ''),
+  (activeSnapshot
+    ? ` | active=${activeSnapshot.cardId} wi=${activeSnapshot.worldInfo.activated}/${activeSnapshot.worldInfo.total}` +
+      ` sys=${activeSnapshot.systemLength} effective=${activeSnapshot.effectiveLength}`
+    : ''),
 );

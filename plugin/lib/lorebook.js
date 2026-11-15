@@ -410,7 +410,6 @@ export function activateEntries({
         acc[item.activatedBy] = (acc[item.activatedBy] || 0) + 1;
         return acc;
       }, {}),
-      session: state,
     },
   };
 }

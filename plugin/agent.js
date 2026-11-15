@@ -15,14 +15,12 @@
 
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadLibrary, bookEntriesOf, resolveActive } from './lib/library.js';
-import { activateEntries, createWorldInfoSession } from './lib/lorebook.js';
-import { applyWorldInfoDecorators } from './lib/decorators.js';
+import { loadLibrary, resolveActive } from './lib/library.js';
+import { createWorldInfoSession } from './lib/lorebook.js';
 import { normalizeCard } from './lib/card.js';
-import { renderPrompt, parsePreset, applyPresetOverrides } from './lib/prompt.js';
-import { createMacroEnv } from './lib/macros.js';
-import { createEjsScope } from './lib/ejs.js';
-import { collectRegexRules, applyWorldInfoRegex, applyUserInputRegex } from './lib/regex.js';
+import { parsePreset, applyPresetOverrides } from './lib/prompt.js';
+import { runPromptPipeline } from './lib/pipeline.js';
+import { applyUserInputRegex } from './lib/regex.js';
 
 export const name = 'dsh-tt-roleplay-agent';
 
@@ -30,7 +28,6 @@ export const name = 'dsh-tt-roleplay-agent';
 export const inject = ['systemPrompt'];
 
 const MARK = '\u0000TT\u0000';
-const EJS_ERROR_RE = /<!-- dsh-tt EJS error: ([\s\S]*?) -->/g;
 
 /** 插件目录（…/dsh-tt/plugin），项目根是它的上一级。 */
 const PLUGIN_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -43,11 +40,6 @@ function log(...args) {
 function shortId(agent) {
   const raw = String(agent?.id ?? '');
   return raw ? raw.slice(-8) : 'shared';
-}
-
-function buildScanText(card) {
-  return [card?.description, card?.firstMes, ...(card?.alternateGreetings ?? []).slice(0, 3), card?.scenario]
-    .filter(Boolean).join('\n');
 }
 
 /** 从一条消息里取出信封；没有则返回 null。 */
@@ -163,6 +155,7 @@ export function apply(ctx, config = {}) {
       greeting: '',
       systemText: '',
       depthText: '',
+      sectionText: '',
       lastKey: '',
       renders: 0,
       // 世界书计时状态（sticky/cooldown/delay）按会话独立推进。
@@ -172,83 +165,43 @@ export function apply(ctx, config = {}) {
     };
   }
 
-  function composeDepth(depth, injected) {
-    const items = [
-      ...(injected || []).map((item) => ({ ...item, depth: Number(item.depth) || 0 })),
-      ...(depth || []).map((item) => ({ ...item, depth: Number(item.depth) || 0 })),
-    ];
-    // 深度 0 最靠近对话：追加到 system 末尾时按深度降序排列。
-    items.sort((a, b) => (Number(b.depth) || 0) - (Number(a.depth) || 0));
-    return items.map((item) => item.content).filter(Boolean).join('\n\n');
-  }
-
   function render(record) {
     const state = record.state;
     if (!state.card) return;
-    const budget = Number(config.worldInfoBudget) || Math.round(maxContext * 0.25);
-    // 卡与预设自带的正则脚本：世界书正文走 placement=5，用户输入走 placement=1。
-    const regexRules = collectRegexRules(state.card?.raw, state.preset?.raw);
-    state.regexRules = regexRules;
-    const regexErrors = [];
-    const onRegexError = (rule, error) => {
-      if (regexErrors.length < 3) regexErrors.push(`${rule.name}: ${error?.message || error}`);
-    };
-    const env = createMacroEnv({
+    const result = runPromptPipeline({
       card: state.card,
+      preset: state.preset,
+      variables: state.variables,
       userName,
-      maxPrompt: config.maxPrompt,
       maxContext,
-    });
-    const lorebookByName = new Map();
-    const scope = createEjsScope(state.variables, {
-      getwi: (entryName) => lorebookByName.get(entryName) ?? '',
-      getchar: () => state.card?.name ?? '',
-      resolve: (key) => (env && key in env ? env[key] : undefined),
-    });
-    // @@if 等装饰器在激活阶段就求值：条件为假的条目不占 token 预算，
-    // 激活条目存的是去掉装饰器指令后的最终正文。
-    const lorebook = activateEntries({
-      entries: bookEntriesOf(state.card),
-      scanText: buildScanText(state.card),
-      budget,
-      // ST 的顺序：装饰器（@@if 等）先求值，再对最终正文过一次世界书正则。
-      decorateEntry: (entry) => applyWorldInfoRegex(
-        applyWorldInfoDecorators(entry.content, scope),
-        regexRules,
-        { onError: onRegexError },
-      ),
+      worldInfoBudget: config.worldInfoBudget,
       session: state.worldInfo,
       recursive: config.worldInfoRecursive !== false,
-      maxRecursionSteps: config.worldInfoMaxRecursion == null ? undefined : Number(config.worldInfoMaxRecursion),
-      minActivations: Number(config.worldInfoMinActivations) || 0,
+      maxRecursionSteps: config.worldInfoMaxRecursion,
+      minActivations: config.worldInfoMinActivations,
+      greeting: state.greeting,
     });
-    for (const entry of lorebook.activated || []) lorebookByName.set(entry.comment, entry.content);
-    const rendered = renderPrompt({ card: state.card, preset: state.preset, lorebook, env, ejsScope: scope });
-    state.systemText = [rendered.system, rendered.tail].filter(Boolean).join('\n\n');
-    state.depthText = composeDepth(rendered.depth, rendered.injected);
+    state.regexRules = result.regexRules;
+    state.systemText = result.systemText;
+    state.depthText = result.depthText;
+    state.sectionText = result.sectionText;
     state.renders += 1;
 
-    const errors = [];
-    const combined = `${state.systemText}\n${state.depthText}`;
-    for (const match of combined.matchAll(EJS_ERROR_RE)) errors.push(match[1]);
+    const worldInfo = result.lorebook.stats;
     const tail = [
       `[${shortId(record.agent)}] 角色「${state.card?.name ?? '-'}」预设「${state.preset?.name ?? '默认'}」`,
-      `世界书 ${lorebook.stats.activated}/${lorebook.stats.total}（${lorebook.stats.tokens} tokens）` +
-        ` 递归 ${lorebook.stats.recursion} 轮 · turn ${state.worldInfo.turn}`,
-      `system ${state.systemText.length} 字 depth ${rendered.depth.length} injected ${rendered.injected.length}`,
+      `世界书 ${worldInfo.activated}/${worldInfo.total}（${worldInfo.tokens} tokens）` +
+        ` 递归 ${worldInfo.recursion} 轮 · turn ${state.worldInfo.turn}`,
+      `system ${state.systemText.length} 字 depth ${result.rendered.depth.length} injected ${result.rendered.injected.length}`,
     ];
-    if (errors.length) tail.push(`EJS 错误 ${errors.length}：${errors[0].slice(0, 160)}`);
-    if (regexErrors.length) tail.push(`正则错误 ${regexErrors.length}：${regexErrors[0]}`);
+    if (result.errors.ejs.length) tail.push(`EJS 错误 ${result.errors.ejs.length}：${result.errors.ejs[0].slice(0, 160)}`);
+    if (result.errors.regex.length) tail.push(`正则错误 ${result.errors.regex.length}：${result.errors.regex[0]}`);
     log(tail.join(' · '));
   }
 
   /** 组装一段系统提示词文本（每次组装时调用，读到的是该会话最新状态）。 */
   function composeSectionText(record) {
-    const state = record.state;
-    const greetingBlock = state.greeting
-      ? `[你的开场白（已作为本局对话的第一条消息发给玩家）]\n${state.greeting}`
-      : '';
-    return [state.systemText, state.depthText, greetingBlock].filter(Boolean).join('\n\n');
+    return record.state.sectionText || '';
   }
 
   /** 解析信封里的卡；优先按客户端给的 hash 命中缓存。 */

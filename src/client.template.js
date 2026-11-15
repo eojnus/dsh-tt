@@ -10,11 +10,26 @@ window.__ModuleLoader__.load({
     const SNAPSHOT = __SNAPSHOT__;
     const TAVERN_CORE_SRC = __TAVERN_CORE__;
     const TAVERN_SHIM_SRC = __TAVERN_SHIM__;
+    const TT_LIB_SRC = __TT_LIB__;
     const STORE_KEY = 'dsh-tt:v3';
     const TH_KEY = 'dsh-tt:th:v1';
     const RP_PREFIX = 'RP · ';
     const POPUP_RESULT = { AFFIRMATIVE: 1, NEGATIVE: 0, CANCELLED: -1 };
     const POPUP_TYPE = { TEXT: 1, CONFIRM: 2, INPUT: 3, DISPLAY: 4 };
+
+    // Host 提示词管线的同构副本（tools/bundle-lib.mjs 生成）。首次预览时才求值。
+    let ttLibCache = null;
+    function ttLib() {
+      if (ttLibCache) return ttLibCache;
+      // eslint-disable-next-line no-new-func
+      const factory = new Function(TT_LIB_SRC + '\nreturn TT_LIB;');
+      ttLibCache = factory();
+      return ttLibCache;
+    }
+
+    // 与 Host 默认值保持一致（agent.js：maxContext 128000、世界书预算 25%）。
+    const PREVIEW_MAX_CONTEXT = 128000;
+    const PREVIEW_WI_BUDGET = 32000;
 
     // ───────────────────────────── 样式 ─────────────────────────────
     const CSS = `
@@ -150,6 +165,9 @@ window.__ModuleLoader__.load({
       .tt-greet b{font-size:12.5px;font-weight:600;}
       .tt-greet span{font-size:11px;opacity:.5;}
       .tt-greet-text{font-size:12.5px;line-height:1.6;opacity:.85;white-space:pre-wrap;margin-top:2px;}
+      .tt-search{height:26px;border-radius:7px;border:1px solid var(--dsw-alias-border-secondary,rgba(0,0,0,.12));
+        background:var(--dsw-alias-background-primary,#fff);padding:0 8px;font:inherit;font-size:12px;min-width:180px;outline:none;}
+      .tt-search:focus{border-color:var(--dsw-alias-border-accent,#0a84ff);}
       .tt-thframe{position:absolute;left:-12000px;top:0;width:900px;height:700px;z-index:30;display:flex;flex-direction:column;
         background:var(--dsw-alias-background-primary,#fff);overflow:hidden;}
       .tt-thframe.on{left:0;top:0;right:0;bottom:0;width:auto;height:auto;}
@@ -920,6 +938,8 @@ window.__ModuleLoader__.load({
       const [promptSearch, setPromptSearch] = useState('');
       const [promptOpen, setPromptOpen] = useState(null);
       const [varOpen, setVarOpen] = useState(false);
+      const [previewSearch, setPreviewSearch] = useState('');
+      const [previewCopyHint, setPreviewCopyHint] = useState('');
 
       const chatRef = useRef(null);
       const scrollRef = useRef(null);
@@ -1396,6 +1416,79 @@ window.__ModuleLoader__.load({
         return store.presetOverrides?.[presetId] || {};
       }, [store.presetOverrides]);
 
+      // ── 发送前预览 ─────────────────────────────────────────────
+      // 与 Host 同源（TT_LIB 同构包）：同样的卡、预设、变量与开场白 → 同样的 system 段。
+      // 只在「预览」页打开时计算，避免每回合都跑一遍 2 MB 的卡。
+      const previewState = useMemo(() => {
+        if (view !== 'preview') return { status: 'idle' };
+        if (!activeCardRaw) return { status: 'empty', message: '还没有读到角色卡（先选一张卡，或等资产加载完成）' };
+        const started = Date.now();
+        try {
+          const lib = ttLib();
+          const card = lib.card.normalizeCard(activeCardRaw);
+          const presetBase = activePresetRaw ? lib.prompt.parsePreset(activePresetRaw) : null;
+          const overrides = activePreset?.id ? { prompts: presetOverridesOf(activePreset.id) } : null;
+          const preset = presetBase && overrides
+            ? lib.prompt.applyPresetOverrides(presetBase, overrides)
+            : presetBase;
+          const result = lib.pipeline.runPromptPipeline({
+            card,
+            preset,
+            variables: ttVars,
+            greeting,
+            userName: '你',
+            maxContext: PREVIEW_MAX_CONTEXT,
+            worldInfoBudget: PREVIEW_WI_BUDGET,
+          });
+          return { status: 'ok', result, card, preset, ms: Date.now() - started };
+        } catch (error) {
+          return { status: 'error', message: String((error && (error.stack || error.message)) || error) };
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [view, assetTick, ttTick, activeCardRaw, activePresetRaw, activePreset, presetOverridesOf, ttVars, greeting]);
+
+      const previewRows = useMemo(() => {
+        if (previewState.status !== 'ok') return [];
+        const { lorebook } = previewState.result;
+        const skippedByUid = new Map();
+        for (const item of lorebook.skipped) {
+          if (!skippedByUid.has(item.uid)) skippedByUid.set(item.uid, item.why);
+        }
+        const rows = [];
+        for (const item of lorebook.activated) {
+          rows.push({
+            uid: item.uid,
+            comment: item.comment,
+            active: true,
+            by: item.activatedBy,
+            position: item.position,
+            role: item.role,
+            depth: item.depth,
+            chars: item.content.length,
+            why: '',
+          });
+        }
+        for (const entry of previewState.result.entries) {
+          if (rows.some((row) => row.uid === entry.uid)) continue;
+          const why = skippedByUid.get(entry.uid) || (entry.enabled === false ? 'disabled' : 'no-match');
+          rows.push({
+            uid: entry.uid,
+            comment: entry.comment,
+            active: false,
+            by: '',
+            position: entry.position,
+            role: entry.role,
+            depth: entry.depth,
+            chars: entry.content ? entry.content.length : 0,
+            why,
+          });
+        }
+        const needle = previewSearch.trim().toLowerCase();
+        return needle
+          ? rows.filter((row) => String(row.comment || '').toLowerCase().includes(needle))
+          : rows;
+      }, [previewState, previewSearch]);
+
       const buildBinding = useCallback(() => {
         const card = activeCard;
         const preset = activePreset;
@@ -1571,7 +1664,7 @@ window.__ModuleLoader__.load({
             )),
         ),
         h('div', { className: 'tt-tabs' },
-          [['chat', '对话'], ['cards', '角色'], ['lore', '世界书'], ['presets', '预设'], ['extensions', '扩展'], ['settings', '设置']].map(([key, label]) =>
+          [['chat', '对话'], ['cards', '角色'], ['lore', '世界书'], ['presets', '预设'], ['preview', '预览'], ['extensions', '扩展'], ['settings', '设置']].map(([key, label]) =>
             h('button', {
               key, className: 'tt-tab' + (view === key ? ' on' : ''),
               onClick: () => setView(key),
@@ -1865,12 +1958,112 @@ window.__ModuleLoader__.load({
           }, null, 2)),
       );
 
+      // ── 预览 ────────────────────────────────────────────────
+      const previewChip = (label, value) => h('span', {
+        key: label,
+        className: 'tt-chip',
+        title: label + '：' + value,
+      }, h('b', { style: { fontWeight: 600 } }, label), ' ', String(value));
+
+      const previewBody = () => {
+        if (previewState.status === 'idle') return h('div', { className: 'tt-note' }, '打开本页即可计算…');
+        if (previewState.status === 'empty') return h('div', { className: 'tt-note' }, previewState.message);
+        if (previewState.status === 'error') {
+          return h('div', null,
+            h('div', { className: 'tt-note', style: { color: '#c00', marginBottom: 6 } }, '管线计算失败：'),
+            h('pre', { className: 'tt-pre', style: { whiteSpace: 'pre-wrap', fontSize: 11.5 } }, previewState.message));
+        }
+        const { result, card, preset } = previewState;
+        const wi = result.lorebook.stats;
+        const activeCount = result.lorebook.activated.length;
+        return h('div', null,
+          h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10 } },
+            previewChip('卡', card.name),
+            previewChip('预设', preset?.name || '(无)'),
+            previewChip('世界书', `${wi.activated}/${wi.total}`),
+            previewChip('tokens', `${wi.tokens}/${wi.budget}`),
+            previewChip('递归', `${wi.recursion} 轮`),
+            previewChip('system', `${result.stats.systemChars} 字`),
+            previewChip('完整段', `${result.stats.sectionChars} 字`),
+            previewChip('耗时', `${previewState.ms} ms`)),
+          h('div', { style: { display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 } },
+            h('input', {
+              className: 'tt-search',
+              placeholder: '搜索世界书条目…',
+              value: previewSearch,
+              onChange: (e) => setPreviewSearch(e.target.value),
+            }),
+            h('span', { className: 'tt-note' }, `${previewRows.length} 条（激活 ${activeCount}）`),
+            h('div', { className: 'tt-spacer' }),
+            h('button', {
+              className: 'tt-btn',
+              onClick: () => {
+                try {
+                  navigator.clipboard.writeText(result.sectionText);
+                  setPreviewCopyHint('已复制');
+                } catch (error) {
+                  setPreviewCopyHint('复制失败');
+                }
+                setTimeout(() => setPreviewCopyHint(''), 1600);
+              },
+            }, '复制完整段'),
+            previewCopyHint ? h('span', { className: 'tt-note' }, previewCopyHint) : null),
+          h('div', { style: { display: 'grid', gridTemplateColumns: 'minmax(260px, 340px) 1fr', gap: 12, alignItems: 'start' } },
+            h('div', {
+              className: 'tt-card',
+              style: { maxHeight: '60vh', overflow: 'auto', padding: 4, background: 'var(--dsw-alias-background-primary,#fff)' },
+            },
+              previewRows.map((row) => h('div', {
+                key: row.uid,
+                style: {
+                  display: 'flex', gap: 6, alignItems: 'baseline', padding: '4px 6px', fontSize: 11.5,
+                  borderBottom: '1px solid var(--dsw-alias-border-secondary, rgba(0,0,0,.06))',
+                  opacity: row.active ? 1 : 0.55,
+                },
+                title: `${row.comment || '#' + row.uid}\n位置 ${row.position}` +
+                  `${row.depth != null ? ' 深度 ' + row.depth : ''} · ${row.role} · ${row.chars} 字`,
+              },
+                h('span', { style: { width: 10, textAlign: 'center', opacity: row.active ? 1 : 0.35 } }, row.active ? '●' : '○'),
+                h('span', {
+                  style: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+                }, row.comment || `#${row.uid}`),
+                h('span', {
+                  className: 'tt-badge',
+                  title: row.active ? '激活来源：' + row.by : '跳过原因：' + row.why,
+                }, row.active ? String(row.by || '') : String(row.why || '')),
+              )),
+              previewRows.length ? null : h('div', { className: 'tt-note', style: { padding: 10 } }, '没有匹配的条目')),
+            h('div', null,
+              h('div', { className: 'tt-note', style: { marginBottom: 4 } }, '系统提示词（= 模型收到的 system 段，含深度注入与开场白块）'),
+              h('pre', {
+                className: 'tt-pre',
+                style: {
+                  maxHeight: '56vh', overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                  margin: 0, padding: 10, fontSize: 11.5, lineHeight: 1.65, borderRadius: 8,
+                  background: 'var(--dsw-alias-background-tertiary, rgba(0,0,0,.04))',
+                },
+              }, result.sectionText))),
+          (result.errors.ejs.length || result.errors.regex.length)
+            ? h('div', { className: 'tt-note', style: { marginTop: 8, color: '#c00' } },
+              `错误：EJS ${result.errors.ejs.length} · 正则 ${result.errors.regex.length}` +
+              (result.errors.ejs[0] ? ` · ${String(result.errors.ejs[0]).slice(0, 120)}` : ''))
+            : null);
+      };
+
+      const previewPane = h('div', { className: 'tt-pane' },
+        h('h2', { className: 'tt-h' }, '发送前预览'),
+        h('p', { className: 'tt-sub' },
+          '与 Host 用同一份管线代码（同构包）计算：卡 + 预设 + 当前变量 + 开场白 → 实际的 system 段。' +
+          '开场白只显示、不发送；深度注入按 D-020 追加在末尾。'),
+        previewBody());
+
       const pane = view === 'cards' ? cardsPane
         : view === 'lore' ? lorePane
           : view === 'presets' ? presetsPane
-            : view === 'extensions' ? extPane
-              : view === 'settings' ? settingsPane
-                : chatPane;
+            : view === 'preview' ? previewPane
+              : view === 'extensions' ? extPane
+                : view === 'settings' ? settingsPane
+                  : chatPane;
 
       const toastNodes = toasts.map((toast) => h('div', { key: toast.id, className: 'tt-toast ' + toast.level },
         toast.title ? h('b', null, toast.title) : null,

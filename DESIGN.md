@@ -1284,6 +1284,8 @@ session.append('user/message', 剥离后的消息)  ← 日志只有原文
 | 世界书（`plugin/lib/lorebook.js`） | 递归扫描、sticky/cooldown/delay、delayUntilRecursion（分级）、inclusion group（跨轮占位）、groupOverride、excludeRecursion、outlet 命名桶、`@@activate`/`@@dont_activate` 前置判定、跳过原因去重 |
 | 正则（`plugin/lib/regex.js`） | ST `regex_scripts` 解析与作用域过滤；Host 侧落地 placement=5（世界书正文）与 placement=1（用户输入） |
 | 开场白选择器（客户端） | 有多条 `alternate_greetings` 时弹层选择，写入 `sessionMeta.greeting` |
+| 提示词预览（客户端） | 新增「预览」页：用**与 Host 同源**的管线（`tools/bundle-lib.mjs` 同构包）算出 system 段、世界书激活/跳过清单与字数，可复制完整段 |
+| 管线去重 | 抽出 `plugin/lib/pipeline.js`（不碰 Node API）：`agent.js`、`tools/snapshot.mjs`、`tools/check.mjs`、面板预览四处共用同一实现 |
 | 工具链 | `tests/`（117 个用例）+ `tools/install.mjs`（幂等安装/卸载/备份）+ `tools/check.mjs`（管线自检）+ `tools/verify-e2e.mjs`（实机 HTTP 验证） |
 | 文档 | 本节；`HANDOFF.md` 同步环境事实 |
 
@@ -1338,8 +1340,9 @@ agent/pre-step ──► 剥离信封 + 用户输入正则（placement=1）
 
 ```powershell
 node tools/snapshot.mjs                       # 资产 → build/snapshot.json
-node tools/build-client.mjs                   # 注入快照/核心/shim → plugin/client.js
-node tests/run.mjs                            # 117 个用例（单进程，绕开沙箱 spawn EPERM）
+node tools/build-client.mjs                   # 注入快照/核心/shim/管线 → plugin/client.js
+node tools/bundle-lib.mjs                     # 单独产出 build/tt-lib.js（检查同构包用）
+node tests/run.mjs                            # 125 个用例（单进程，绕开沙箱 spawn EPERM）
 node tools/check.mjs                          # 管线自检（激活数/分桶/注入/残留）
 node tools/install.mjs status|install|uninstall [--profile <名字>] [--profile-dir <路径>]
 node tools/verify-e2e.mjs "http://127.0.0.1:PORT/?token=…"   # 对运行中的实例做端到端验证

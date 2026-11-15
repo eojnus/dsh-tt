@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { ROOT } from './helpers.mjs';
+import { ROOT, cardFixture, presetFixture } from './helpers.mjs';
 
 const CLIENT = path.join(ROOT, 'plugin', 'client.js');
 
@@ -115,6 +115,28 @@ test('client.js：模块注册、apply 注册槽位、Panel 首屏可渲染', as
   } finally {
     for (const key of Object.keys(saved)) globalThis[key] = saved[key];
   }
+});
+
+test('client.js 内嵌的提示词管线可求值，并能算出 system 段', async () => {
+  const source = fs.readFileSync(CLIENT, 'utf8');
+  const match = source.match(/const TT_LIB_SRC = ("(?:[^"\\]|\\.)*");/);
+  assert.ok(match, 'client.js 里应当有 TT_LIB_SRC');
+  const libSource = JSON.parse(match[1]);
+  // eslint-disable-next-line no-new-func
+  const TT_LIB = new Function(libSource + '\nreturn TT_LIB;')();
+  for (const name of ['card', 'prompt', 'lorebook', 'regex', 'pipeline']) assert.ok(TT_LIB[name], `缺少 ${name}`);
+
+  const result = TT_LIB.pipeline.runPromptPipeline({
+    card: TT_LIB.card.normalizeCard(cardFixture()),
+    preset: TT_LIB.prompt.parsePreset(presetFixture()),
+    variables: { 天气: '雨' },
+    greeting: '开场白',
+    maxContext: 128000,
+  });
+  assert.match(result.systemText, /青岚/);
+  assert.match(result.sectionText, /开场白/);
+  assert.ok(result.stats.worldInfo.total > 0);
+  assert.equal(result.errors.ejs.length, 0);
 });
 
 test('client.js 里不再有硬编码的 X:\\dsh-tt', () => {

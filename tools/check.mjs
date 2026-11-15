@@ -1,13 +1,13 @@
 // 提示词管线自检：把资产库跑一遍，报告与文档验收口径一致的指标。
+// 与 Host 使用同一个 runPromptPipeline（plugin/lib/pipeline.js），所以数字可以直接对账。
 //
 // 用法：
 //   node tools/check.mjs [资产根目录] [卡名]
 //   环境变量：
 //     DSH_TT_ACTIVE   按名字选卡（否则资产库第一张）
 //     DSH_TT_VARS     变量 JSON，例如 '{"牛头":true}'
-//     DSH_TT_GREETING 开场白文本（会按 agent.js 的方式拼在 system 末尾）
+//     DSH_TT_GREETING 开场白文本
 //     DSH_TT_WI_BUDGET 世界书预算（默认 32000）
-import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -16,12 +16,9 @@ const projectRoot = path.resolve(here, '..');
 const assetRoot = process.argv[2] || projectRoot;
 const load = (relative) => import(pathToFileURL(path.join(projectRoot, relative)).href);
 
-const { loadLibrary, bookEntriesOf, resolveActive } = await load('plugin/lib/library.js');
-const { activateEntries } = await load('plugin/lib/lorebook.js');
-const { renderPrompt } = await load('plugin/lib/prompt.js');
-const { createMacroEnv } = await load('plugin/lib/macros.js');
-const { createEjsScope } = await load('plugin/lib/ejs.js');
-const { applyWorldInfoDecorators } = await load('plugin/lib/decorators.js');
+const { loadLibrary, resolveActive } = await load('plugin/lib/library.js');
+const { runPromptPipeline } = await load('plugin/lib/pipeline.js');
+const { normalizeCharacterBookEntries } = await load('plugin/lib/lorebook.js');
 
 function parseVariables() {
   if (!process.env.DSH_TT_VARS) return {};
@@ -33,9 +30,7 @@ function parseVariables() {
   }
 }
 
-function countMatches(text, re) {
-  return (text.match(re) || []).length;
-}
+const countMatches = (text, re) => (text.match(re) || []).length;
 
 const roots = [path.join(assetRoot, '参考'), path.join(assetRoot, 'assets')];
 const library = loadLibrary(roots);
@@ -61,36 +56,18 @@ const preset = library.presets[0]?.preset ?? null;
 const variables = parseVariables();
 const greeting = process.env.DSH_TT_GREETING || '';
 const budget = Number(process.env.DSH_TT_WI_BUDGET) || 32000;
+const entries = normalizeCharacterBookEntries(card.characterBook);
 
-const scanText = [card.description, card.firstMes, ...(card.alternateGreetings ?? []).slice(0, 3), card.scenario]
-  .filter(Boolean).join('\n');
-const entries = bookEntriesOf(card);
-const env = createMacroEnv({ card, userName: '你', maxPrompt: 128000, maxContext: 200000 });
-const lorebookByName = new Map();
-const scope = createEjsScope(variables, {
-  getwi: (name) => lorebookByName.get(name) ?? '',
-  getchar: () => card.name,
-  resolve: (key) => (env && key in env ? env[key] : undefined),
+const result = runPromptPipeline({
+  card,
+  preset,
+  variables,
+  greeting,
+  maxContext: 200000,
+  worldInfoBudget: budget,
 });
-
-const lorebook = activateEntries({
-  entries,
-  scanText,
-  budget,
-  decorateEntry: (entry) => applyWorldInfoDecorators(entry.content, scope),
-});
-for (const entry of lorebook.activated) lorebookByName.set(entry.comment, entry.content);
-
-const rendered = renderPrompt({ card, preset, lorebook, env, ejsScope: scope });
-const systemText = [rendered.system, rendered.tail].filter(Boolean).join('\n\n');
-// 模型实际看到的 system 段 = system + tail + 深度注入 + 绝对注入（agent.js 的拼法）。
-const depthText = [...rendered.injected, ...rendered.depth]
-  .sort((a, b) => (Number(b.depth) || 0) - (Number(a.depth) || 0))
-  .map((item) => item.content)
-  .join('\n\n');
-const effective = [systemText, depthText].filter(Boolean).join('\n\n');
-const withGreeting = [effective, greeting ? `[你的开场白（已作为本局对话的第一条消息发给玩家）]\n${greeting}` : '']
-  .filter(Boolean).join('\n\n');
+const { lorebook, rendered, systemText, depthText, sectionText, errors, stats } = result;
+const lines = sectionText.split('\n');
 
 // 模板统计：解释字符数变化的可能来源。
 const joined = [
@@ -101,18 +78,17 @@ const joined = [
 ].join('\n');
 
 const leftovers = {
-  ejsOpen: countMatches(effective, /<%/g),
-  ejsClose: countMatches(effective, /%>/g),
-  ejsError: countMatches(effective, /dsh-tt EJS error/g),
-  decorator: countMatches(effective, /@@(?:if|activate|dont_activate)/g),
-  macroLeft: countMatches(effective, /\{\{[^}]{0,40}\}\}/g),
-  commentMacro: countMatches(effective, /\{\{\/\//g),
+  ejsOpen: countMatches(sectionText, /<%/g),
+  ejsClose: countMatches(sectionText, /%>/g),
+  ejsError: countMatches(sectionText, /dsh-tt EJS error/g),
+  decorator: countMatches(sectionText, /@@(?:if|activate|dont_activate)/g),
+  macroLeft: countMatches(sectionText, /\{\{[^}]{0,40}\}\}/g),
+  commentMacro: countMatches(sectionText, /\{\{\/\//g),
 };
-const lines = withGreeting.split('\n');
 
 console.log('== 资产 ==');
 console.log(`根目录      ${roots.join(' ; ')}`);
-console.log(`卡          ${card.name}（${card.spec}，${card.characterBook?.entries?.length ?? 0} 条内嵌条目）`);
+console.log(`卡          ${card.name}（${card.spec}，${entries.length} 条内嵌条目）`);
 console.log(`预设        ${preset?.name ?? '(无)'}（${preset?.prompts?.length ?? 0} prompts / ${preset?.order?.length ?? 0} order）`);
 console.log(`变量        ${JSON.stringify(variables)}${greeting ? `，开场白 ${greeting.length} 字` : ''}`);
 console.log('== 世界书 ==');
@@ -126,12 +102,10 @@ for (const item of lorebook.skipped) skipReasons[item.why] = (skipReasons[item.w
 console.log(`跳过原因    ${JSON.stringify(skipReasons)}`);
 console.log('== 提示词 ==');
 console.log(`system 段   ${systemText.length} 字（${lines.length} 行）`);
-console.log(`有效提示词  ${effective.length} 字（system + 深度/绝对注入）`);
-console.log(`含开场白    ${withGreeting.length} 字（agent.js 的实际拼接）`);
-console.log(`system 段   ${rendered.system.length} 字，tail ${rendered.tail.length} 字`);
-console.log(`depth       ${rendered.depth.length} 组：${rendered.depth.map((item) => `d${item.depth}/${item.role}/${item.content.length}`).join(' ')}`);
-console.log(`injected    ${rendered.injected.length} 条：${rendered.injected.map((item) => `d${item.depth}/${item.content.length}`).join(' ')}`);
-console.log(`trace       ${rendered.trace.parts.length} 段`);
+console.log(`深度注入    ${depthText.length} 字（${rendered.depth.length} 组 + ${rendered.injected.length} 绝对注入）`);
+console.log(`完整段      ${sectionText.length} 字（含开场白块 ${result.greetingBlock.length} 字）`);
+console.log(`trace       ${rendered.trace.parts.length} 段；EJS 错误 ${errors.ejs.length}、正则错误 ${errors.regex.length}`);
+console.log(`正则规则    ${result.regexRules.length} 条（placement 5：${result.regexRules.filter((rule) => rule.placement.includes(5)).length}）`);
 console.log('== 模板统计 ==');
 console.log(`trim 标记   <%_ ${countMatches(joined, /<%_/g)} 个，_%> ${countMatches(joined, /_%>/g)} 个，-%> ${countMatches(joined, /-%>/g)} 个，<%% ${countMatches(joined, /<%%/g)} 个`);
 console.log(`EJS 标记    ${countMatches(joined, /<%/g)} 个；宏 {{…}} ${countMatches(joined, /\{\{[^}]{0,40}\}\}/g)} 个，{{//}} ${countMatches(joined, /\{\{\/\//g)} 个`);
@@ -140,8 +114,9 @@ console.log(JSON.stringify(leftovers));
 const bad = Object.entries(leftovers).filter(([key, value]) => value > 0 && key !== 'macroLeft');
 if (bad.length) {
   console.log('!! 有残留：' + bad.map(([key, value]) => `${key}=${value}`).join(' '));
-  const sample = effective.match(/<%.{0,120}/);
+  const sample = sectionText.match(/<%.{0,120}/);
   if (sample) console.log('样例：' + sample[0]);
 } else {
   console.log('OK：无 EJS/装饰器残留');
 }
+console.log(`== 汇总 ==\n${JSON.stringify(stats)}`);
