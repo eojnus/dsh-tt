@@ -181,3 +181,80 @@ test('agent/created 之后同一个 agent 不会重复注册段', () => {
   harness.emit('agent/inbox/inserted', { agent: a, message: envelope({ cardJson: cardFixture() }, 'x') });
   assert.equal(a.sections.length, 1);
 });
+
+test('世界书正则（placement=5）作用于条目正文', () => {
+  const harness = boot();
+  const a = makeAgent('agent-wi-regex');
+  harness.emit('agent/created', { agent: a });
+  const card = {
+    spec: 'chara_card_v3',
+    data: {
+      name: '正则卡',
+      description: '一个用于验证正则的卡。',
+      first_mes: '',
+      character_book: {
+        entries: [{
+          id: 1,
+          keys: [],
+          content: '【提示】真正的正文。',
+          constant: true,
+          position: 'before_char',
+          insertion_order: 10,
+          enabled: true,
+        }],
+      },
+      extensions: {
+        regex_scripts: [{
+          scriptName: '去提示',
+          findRegex: '/【[^】]*】/g',
+          replaceString: '',
+          placement: [5],
+          promptOnly: true,
+        }],
+      },
+    },
+  };
+  harness.emit('agent/inbox/inserted', { agent: a, message: envelope({ cardJson: card }, 'hi') });
+  const text = a.sections[0].text();
+  assert.match(text, /真正的正文/);
+  assert.equal(text.includes('【提示】'), false, 'placement=5 的正则应当把世界书里的标记去掉');
+});
+
+test('用户输入正则（placement=1）在 pre-step 生效', async () => {
+  const harness = boot();
+  const a = makeAgent('agent-user-regex');
+  harness.emit('agent/created', { agent: a });
+  // 夹具卡里有 promptOnly 规则：把 ... 换成全角省略号，placement [1,2]。
+  harness.emit('agent/inbox/inserted', { agent: a, message: envelope({ cardJson: cardFixture() }, '他说...好') });
+  const message = envelope({ cardJson: cardFixture() }, '他说...好');
+  const decision = { kind: 'enter', messages: [message] };
+  const result = await harness.emit('agent/pre-step', { agent: a }, async () => decision);
+  assert.equal(result.messages[0].content[0].text, '他说……好');
+});
+
+test('只用于显示的正则不会改提示词', async () => {
+  const harness = boot();
+  const a = makeAgent('agent-display-regex');
+  harness.emit('agent/created', { agent: a });
+  const card = {
+    spec: 'chara_card_v3',
+    data: {
+      name: '显示正则卡',
+      description: '描述',
+      first_mes: '',
+      extensions: {
+        regex_scripts: [{
+          scriptName: '只显示',
+          findRegex: '/ABC/g',
+          replaceString: 'xyz',
+          placement: [1],
+          markdownOnly: true,
+        }],
+      },
+    },
+  };
+  harness.emit('agent/inbox/inserted', { agent: a, message: envelope({ cardJson: card }, 'ABC') });
+  const message = envelope({ cardJson: card }, 'ABC');
+  const result = await harness.emit('agent/pre-step', { agent: a }, async () => ({ kind: 'enter', messages: [message] }));
+  assert.equal(result.messages[0].content[0].text, 'ABC', 'markdownOnly 的规则不该进提示词');
+});

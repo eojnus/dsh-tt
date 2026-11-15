@@ -117,6 +117,7 @@ console.log(`预设        ${preset?.name ?? '(无)'}（${preset?.prompts?.lengt
 console.log(`变量        ${JSON.stringify(variables)}${greeting ? `，开场白 ${greeting.length} 字` : ''}`);
 console.log('== 世界书 ==');
 console.log(`激活        ${lorebook.stats.activated}/${lorebook.stats.total}，${lorebook.stats.tokens} tokens / 预算 ${budget}`);
+console.log(`递归        ${lorebook.stats.recursion} 轮（共扫描 ${lorebook.stats.rounds} 轮），按来源 ${JSON.stringify(lorebook.stats.byActivation)}`);
 console.log(`常量/关键词  ${lorebook.activated.filter((entry) => entry.constant).length} / ${lorebook.activated.filter((entry) => !entry.constant).length}`);
 console.log(`分桶        before=${lorebook.buckets.before.length} after=${lorebook.buckets.after.length} ` +
   `depth=${lorebook.buckets.depth.length} outlet=${lorebook.buckets.outlet.length}`);

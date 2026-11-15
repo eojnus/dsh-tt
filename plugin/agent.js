@@ -16,12 +16,13 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadLibrary, bookEntriesOf, resolveActive } from './lib/library.js';
-import { activateEntries } from './lib/lorebook.js';
+import { activateEntries, createWorldInfoSession } from './lib/lorebook.js';
 import { applyWorldInfoDecorators } from './lib/decorators.js';
 import { normalizeCard } from './lib/card.js';
 import { renderPrompt, parsePreset, applyPresetOverrides } from './lib/prompt.js';
 import { createMacroEnv } from './lib/macros.js';
 import { createEjsScope } from './lib/ejs.js';
+import { collectRegexRules, applyWorldInfoRegex, applyUserInputRegex } from './lib/regex.js';
 
 export const name = 'dsh-tt-roleplay-agent';
 
@@ -164,6 +165,10 @@ export function apply(ctx, config = {}) {
       depthText: '',
       lastKey: '',
       renders: 0,
+      // 世界书计时状态（sticky/cooldown/delay）按会话独立推进。
+      worldInfo: createWorldInfoSession(),
+      // 卡 + 预设自带的 ST 正则脚本（prompt 作用域用）。
+      regexRules: [],
     };
   }
 
@@ -181,6 +186,13 @@ export function apply(ctx, config = {}) {
     const state = record.state;
     if (!state.card) return;
     const budget = Number(config.worldInfoBudget) || Math.round(maxContext * 0.25);
+    // 卡与预设自带的正则脚本：世界书正文走 placement=5，用户输入走 placement=1。
+    const regexRules = collectRegexRules(state.card?.raw, state.preset?.raw);
+    state.regexRules = regexRules;
+    const regexErrors = [];
+    const onRegexError = (rule, error) => {
+      if (regexErrors.length < 3) regexErrors.push(`${rule.name}: ${error?.message || error}`);
+    };
     const env = createMacroEnv({
       card: state.card,
       userName,
@@ -199,7 +211,16 @@ export function apply(ctx, config = {}) {
       entries: bookEntriesOf(state.card),
       scanText: buildScanText(state.card),
       budget,
-      decorateEntry: (entry) => applyWorldInfoDecorators(entry.content, scope),
+      // ST 的顺序：装饰器（@@if 等）先求值，再对最终正文过一次世界书正则。
+      decorateEntry: (entry) => applyWorldInfoRegex(
+        applyWorldInfoDecorators(entry.content, scope),
+        regexRules,
+        { onError: onRegexError },
+      ),
+      session: state.worldInfo,
+      recursive: config.worldInfoRecursive !== false,
+      maxRecursionSteps: config.worldInfoMaxRecursion == null ? undefined : Number(config.worldInfoMaxRecursion),
+      minActivations: Number(config.worldInfoMinActivations) || 0,
     });
     for (const entry of lorebook.activated || []) lorebookByName.set(entry.comment, entry.content);
     const rendered = renderPrompt({ card: state.card, preset: state.preset, lorebook, env, ejsScope: scope });
@@ -212,10 +233,12 @@ export function apply(ctx, config = {}) {
     for (const match of combined.matchAll(EJS_ERROR_RE)) errors.push(match[1]);
     const tail = [
       `[${shortId(record.agent)}] 角色「${state.card?.name ?? '-'}」预设「${state.preset?.name ?? '默认'}」`,
-      `世界书 ${lorebook.stats.activated}/${lorebook.stats.total}（${lorebook.stats.tokens} tokens）`,
+      `世界书 ${lorebook.stats.activated}/${lorebook.stats.total}（${lorebook.stats.tokens} tokens）` +
+        ` 递归 ${lorebook.stats.recursion} 轮 · turn ${state.worldInfo.turn}`,
       `system ${state.systemText.length} 字 depth ${rendered.depth.length} injected ${rendered.injected.length}`,
     ];
     if (errors.length) tail.push(`EJS 错误 ${errors.length}：${errors[0].slice(0, 160)}`);
+    if (regexErrors.length) tail.push(`正则错误 ${regexErrors.length}：${regexErrors[0]}`);
     log(tail.join(' · '));
   }
 
@@ -332,6 +355,8 @@ export function apply(ctx, config = {}) {
       state.presetOverridesKey || '',
       state.variablesHash,
       state.greeting,
+      // turn 参与 key：sticky/cooldown/delay 随回合推进，必须每回合重算。
+      String(state.worldInfo.turn),
     ].join('|');
 
     if (changed || state.lastKey !== nextKey) {
@@ -424,6 +449,8 @@ export function apply(ctx, config = {}) {
         const envelope = readEnvelope(payload?.message);
         if (!envelope) return;
         const record = recordFor(payload?.agent);
+        // 一条带信封的用户消息 = 一个回合；世界书计时按它推进。
+        record.state.worldInfo.turn += 1;
         applyBinding(record, envelope.binding);
       } catch (error) {
         log('inbox/inserted 处理失败：', error?.message || error);
@@ -437,6 +464,7 @@ export function apply(ctx, config = {}) {
   // 进入步骤前剥离信封：日志与模型都只看到用户原文。
   // 注意：DSH 先 assemble 系统提示词、再发 agent/pre-step（agent-loop preStep），
   // 所以这里的绑定应用只是兜底，真正的时机是 inbox/inserted。
+  // 用户输入的 prompt 作用域正则（placement=1）也在这里生效。
   try {
     ctx.on('agent/pre-step', async (payload, next) => {
       const decision = await next();
@@ -444,22 +472,32 @@ export function apply(ctx, config = {}) {
         if (!decision || decision.kind !== 'enter' || !Array.isArray(decision.messages)) return decision;
         let changed = false;
         let binding = null;
+        for (const message of decision.messages) {
+          const envelope = readEnvelope(message);
+          if (!envelope) continue;
+          changed = true;
+          if (!binding) binding = envelope.binding;
+        }
+        if (!changed) return decision;
+        const record = recordFor(payload?.agent);
+        // 兜底：若 inbox 事件没有触发（例如恢复会话），这里再应用一次绑定，
+        // 同时让 state.regexRules 与当前卡/预设对齐。
+        if (binding) applyBinding(record, binding);
         const messages = decision.messages.map((message) => {
           const envelope = readEnvelope(message);
           if (!envelope) return message;
-          changed = true;
-          if (!binding) binding = envelope.binding;
-          return replaceMessageText(message, envelope.body);
+          const body = record.state.regexRules.length
+            ? applyUserInputRegex(envelope.body, record.state.regexRules)
+            : envelope.body;
+          return replaceMessageText(message, body);
         });
-        if (!changed) return decision;
-        if (binding) applyBinding(recordFor(payload?.agent), binding);
         return { ...decision, messages };
       } catch (error) {
         log('pre-step 处理失败：', error?.message || error);
         return decision;
       }
     });
-    log('已挂载 agent/pre-step（信封剥离）。');
+    log('已挂载 agent/pre-step（信封剥离 + 用户输入正则）。');
   } catch (error) {
     log('agent/pre-step 订阅失败：', error?.message || error);
   }
