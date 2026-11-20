@@ -43,3 +43,7 @@ node tests/run.mjs
 ```
 
 修改 Rust 代码时，先按 [Rust / WASM 构建说明](rust/README.md) 重新生成 WASM。项目的架构和兼容性设计见 [DESIGN.md](DESIGN.md)。
+
+##目前问题
+
+目前还不能保证实现与SillyTarven一致相同的使用体验，功能支持仍需完善。
