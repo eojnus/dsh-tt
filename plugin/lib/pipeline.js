@@ -13,9 +13,10 @@
 import { createMacroEnv } from './macros.js';
 import { createEjsScope } from './ejs.js';
 import { applyWorldInfoDecorators } from './decorators.js';
-import { activateEntries, normalizeCharacterBookEntries, createWorldInfoSession } from './lorebook.js';
+import { activateEntries, normalizeCharacterBookEntries, createWorldInfoSession, DEFAULT_SCAN_DEPTH } from './lorebook.js';
 import { renderPrompt } from './prompt.js';
 import { collectRegexRules, applyWorldInfoRegex } from './regex.js';
+import { cardAssetsWasm } from './card-assets-wasm.js';
 
 const EJS_ERROR_RE = /<!-- dsh-tt EJS error: ([\s\S]*?) -->/g;
 
@@ -41,6 +42,48 @@ export function scanTextOf(card) {
     .filter(Boolean).join('\n');
 }
 
+function scanDepthOf(entry) {
+  const depth = entry.scanDepth ?? entry.scan_depth ?? entry.extensions?.scan_depth;
+  const value = Number(depth);
+  return depth !== null && depth !== undefined && depth !== '' && Number.isFinite(value) && value >= 0
+    ? Math.floor(value)
+    : DEFAULT_SCAN_DEPTH;
+}
+
+function worldInfoEntries(book, chatWorldbook) {
+  return [
+    ...normalizeCharacterBookEntries(book),
+    ...normalizeCharacterBookEntries(chatWorldbook).map((entry) => ({ ...entry, uid: `chat:${entry.uid}` })),
+  ];
+}
+
+export function worldInfoHistoryLimit(book, chatWorldbook) {
+  return worldInfoEntries(book, chatWorldbook)
+    .filter((entry) => entry.enabled)
+    .reduce((depth, entry) => Math.max(depth, scanDepthOf(entry)), DEFAULT_SCAN_DEPTH);
+}
+
+function conversationScanner(messages, card, userDescription, injectedScan) {
+  const history = messages.filter((value) => typeof value === 'string' && value.length > 0);
+  const sources = [
+    ['matchPersonaDescription', 'match_persona_description', userDescription],
+    ['matchCharacterDescription', 'match_character_description', card?.description],
+    ['matchCharacterPersonality', 'match_character_personality', card?.personality],
+    ['matchCharacterDepthPrompt', 'match_character_depth_prompt', card?.depthPrompt?.prompt],
+    ['matchScenario', 'match_scenario', card?.scenario],
+    ['matchCreatorNotes', 'match_creator_notes', card?.creatorNotes],
+  ];
+  const byDepth = new Map();
+  return (entry) => {
+    const depth = scanDepthOf(entry);
+    if (!byDepth.has(depth)) byDepth.set(depth, depth ? history.slice(-depth).reverse().join('\n') : '');
+    const extra = sources
+      .filter(([key, legacy]) => (entry[key] ?? entry[legacy] ?? entry.extensions?.[legacy]) === true)
+      .map(([, , value]) => value);
+    return [byDepth.get(depth), ...extra, ...injectedScan].filter(Boolean).join('\n');
+  };
+}
+
 /**
  * 跑一次完整管线。
  * @param {object} input
@@ -55,8 +98,10 @@ export function scanTextOf(card) {
  * @param {number} [input.maxRecursionSteps]
  * @param {number} [input.minActivations]
  * @param {string} [input.greeting]
+ * @param {string[]} [input.chatMessages] 按时间顺序排列的对话正文，含本轮输入
  * @param {Array} [input.regexRules] 已归一化的正则规则；缺省从卡/预设收集
- * @param {Array} [input.entries] 世界书条目（缺省取卡内 character_book）
+ * @param {Array} [input.entries] 世界书条目（缺省取角色及会话绑定）
+ * @param {object} [input.chatWorldbook] 本局绑定的独立世界书
  * @param {(kind:string, error:unknown)=>void} [input.onError]
  */
 export function runPromptPipeline(input = {}) {
@@ -69,13 +114,16 @@ export function runPromptPipeline(input = {}) {
   const session = input.session ?? createWorldInfoSession();
   const errors = { ejs: [], regex: [] };
   const report = input.onError || (() => {});
+  const scriptPrompts = input.scriptPrompts?.length
+    ? cardAssetsWasm().partitionPromptInjections(input.scriptPrompts) : null;
+  const injectedScan = scriptPrompts?.scan ?? [];
 
   const regexRules = Array.isArray(input.regexRules)
     ? input.regexRules
     : collectRegexRules(card?.raw, preset?.raw);
   const entries = Array.isArray(input.entries)
     ? input.entries
-    : normalizeCharacterBookEntries(card?.characterBook);
+    : worldInfoEntries(card?.characterBook, input.chatWorldbook);
 
   const env = createMacroEnv({ card, userName, maxPrompt: maxContext, maxContext });
   const lorebookByName = new Map();
@@ -87,7 +135,10 @@ export function runPromptPipeline(input = {}) {
 
   const lorebook = activateEntries({
     entries,
-    scanText: scanTextOf(card),
+    scanText: Array.isArray(input.chatMessages) ? '' : [scanTextOf(card), ...injectedScan].filter(Boolean).join('\n'),
+    scanTextForEntry: Array.isArray(input.chatMessages)
+      ? conversationScanner(input.chatMessages, card, input.userDescription, injectedScan)
+      : undefined,
     budget,
     // ST 的顺序：装饰器先求值，再对最终正文过一次世界书正则（placement=5）。
     decorateEntry: (entry) => applyWorldInfoRegex(
@@ -108,6 +159,10 @@ export function runPromptPipeline(input = {}) {
   for (const entry of lorebook.activated) lorebookByName.set(entry.comment, entry.content);
 
   const rendered = renderPrompt({ card, preset, lorebook, env, ejsScope: scope });
+  if (scriptPrompts?.depth.length) {
+    rendered.injected.push(...scriptPrompts.depth);
+    rendered.trace.injected = rendered.injected.length;
+  }
   const systemText = [rendered.system, rendered.tail].filter(Boolean).join('\n\n');
   const depthText = composeDepthText(rendered.depth, rendered.injected);
   const greetingBlock = greetingBlockOf(input.greeting);

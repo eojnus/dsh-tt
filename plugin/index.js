@@ -4,8 +4,16 @@
 // 真正的 Host 接管逻辑在 ./agent.js，由「角色扮演」preset 在 agent 作用域内加载，
 // 以便声明 systemPrompt 注入。
 
+import { GENERATION_PATH, handleAuxiliaryGeneration } from './lib/dsh-generation.js';
+
 export const name = 'dsh-tt-roleplay';
 
-export function apply() {
+export function apply(ctx) {
+  ctx.inject(['connection', 'llm', 'sessionController'], (scope) => {
+    scope.connection.fetch.register({
+      path: GENERATION_PATH, methods: ['POST'], requestBody: 'streaming',
+      fetch: (request) => handleAuxiliaryGeneration(scope, request),
+    });
+  });
   try { console.log('[dsh-tt] 根层入口：客户端模块已注册，提示词接管由 preset 内的 @dsh-tt/roleplay/agent 负责。'); } catch { /* ignore */ }
 }

@@ -1,6 +1,7 @@
 // 把构建期快照、TH 核心、iframe shim 与提示词管线（同构包）注入客户端模板，产出 plugin/client.js。
 import fs from 'node:fs';
 import path from 'node:path';
+import { stripTypeScriptTypes } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { bundleLibSource } from './bundle-lib.mjs';
 
@@ -14,12 +15,16 @@ if (!fs.existsSync(snapshotPath)) {
 }
 const snapshot = JSON.parse(fs.readFileSync(snapshotPath, 'utf8'));
 const coreSource = fs.readFileSync(path.join(root, 'src/tavern/core.js'), 'utf8');
-const shimSource = fs.readFileSync(path.join(root, 'src/tavern/shim.js'), 'utf8');
+const compile = (file) => stripTypeScriptTypes(fs.readFileSync(path.join(root, file), 'utf8'))
+  .replace(/[ \t]+$/gm, '').trim() + '\n';
+const shimSource = fs.readFileSync(path.join(root, 'src/tavern/shim.js'), 'utf8')
+  .replace('/* __DSH_GENERATION_SHIM__ */', () => compile('src/tavern/generation.ts'));
+const acornLicense = fs.readFileSync(path.join(root, 'src/tavern/vendor/ACORN-LICENSE'), 'utf8').trim();
+const parserSource = `/*\n${acornLicense}\n*/\n${fs.readFileSync(path.join(root, 'src/tavern/vendor/acorn.js'), 'utf8')}`;
 const zodSource = fs.readFileSync(path.join(root, 'src/tavern/zod4.bundle.mjs')).toString('base64');
-const wasmPath = path.join(root, 'build/rust-target/wasm32-unknown-unknown/release/dsh_tt_prototype.wasm');
-const wasmBase64 = fs.existsSync(wasmPath) ? fs.readFileSync(wasmPath).toString('base64') : '';
-const wasmAdapter = fs.readFileSync(path.join(root, 'prototype/wasm-card-length.js'), 'utf8')
-  .replace('export function createCardLengthPrototype', 'function createCardLengthPrototype');
+const vendorSource = ['vue.js', 'js-yaml.js', 'lodash.js', 'jquery.js']
+  .map((file) => fs.readFileSync(path.join(root, 'src/tavern/vendor', file), 'utf8').trim())
+  .join('\n;\n');
 const libSource = bundleLibSource();
 
 // 客户端只需要元数据：卡/预设/世界书正文由 workspaceFiles 在运行时按需读取。
@@ -44,14 +49,19 @@ function replaceOnce(source, marker, literal, label) {
 }
 
 let out = template;
+out = replaceOnce(out, '/* __DSH_GENERATION_TRANSPORT__ */', compile('src/auxiliary-transport.ts'), '辅助生成客户端');
+out = replaceOnce(out, '/* __DSH_MESSAGE_DISPLAYS__ */', compile('src/message-displays.ts'), '动态消息界面');
 out = replaceOnce(out, 'const SNAPSHOT = __SNAPSHOT__;', `const SNAPSHOT = ${JSON.stringify(clientSnapshot)};`, '快照');
 out = replaceOnce(out, 'const TAVERN_CORE_SRC = __TAVERN_CORE__;', `const TAVERN_CORE_SRC = ${JSON.stringify(coreSource)};`, 'TH 核心');
+out = replaceOnce(out, 'const TAVERN_PARSER_SRC = __TAVERN_PARSER__;', `const TAVERN_PARSER_SRC = ${JSON.stringify(parserSource)};`, 'TH 脚本解析器');
+out = replaceOnce(out, 'const TAVERN_REGEX_SRC = __TAVERN_REGEX__;', `const TAVERN_REGEX_SRC = ${JSON.stringify(bundleLibSource(['regex']))};`, 'TH 正则');
 out = replaceOnce(out, 'const TAVERN_SHIM_SRC = __TAVERN_SHIM__;', `const TAVERN_SHIM_SRC = ${JSON.stringify(shimSource)};`, 'TH shim');
 out = replaceOnce(out, 'const TAVERN_ZOD_SRC = __TAVERN_ZOD__;', `const TAVERN_ZOD_SRC = ${JSON.stringify(zodSource)};`, 'Zod');
-out = replaceOnce(out, 'const WASM_PROTOTYPE_BASE64 = __WASM_PROTOTYPE__;', `const WASM_PROTOTYPE_BASE64 = ${JSON.stringify(wasmBase64)};`, 'WASM 原型');
-out = replaceOnce(out, '/* __WASM_ADAPTER__ */', wasmAdapter, 'WASM 适配层');
+out = replaceOnce(out, 'const TAVERN_VENDOR_SRC = __TAVERN_VENDOR__;', `const TAVERN_VENDOR_SRC = ${JSON.stringify(vendorSource)};`, 'TH 浏览器依赖');
 out = replaceOnce(out, 'const TT_LIB_SRC = __TT_LIB__;', `const TT_LIB_SRC = ${JSON.stringify(libSource)};`, '提示词管线');
 
+fs.writeFileSync(path.join(root, 'plugin/lib/dsh-generation.js'),
+  '// Generated from src/dsh-generation.ts by tools/build-client.mjs.\n' + compile('src/dsh-generation.ts'), 'utf8');
 fs.writeFileSync(path.join(root, 'plugin/client.js'), out, 'utf8');
 console.log(
   `client.js 已生成（${(out.length / 1024).toFixed(1)} KB：` +

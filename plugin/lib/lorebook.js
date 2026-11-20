@@ -9,6 +9,8 @@
 //
 // 计时单位：session.turn —— 每次用户消息 +1（近似 ST 的聊天消息条数）。
 
+import { cardAssetsWasm } from './card-assets-wasm.js';
+
 export const WI_POSITION = {
   before: 0,
   after: 1,
@@ -22,6 +24,7 @@ export const WI_POSITION = {
 
 export const WI_LOGIC = { AND_ANY: 0, NOT_ALL: 1, NOT_ANY: 2, AND_ALL: 3 };
 export const DEFAULT_DEPTH = 4;
+export const DEFAULT_SCAN_DEPTH = 2;
 export const DEFAULT_MAX_RECURSION = 5;
 
 export function estimateTokens(text) {
@@ -49,35 +52,86 @@ function buildMatcher(key, { useRegex = false, caseSensitive = false, matchWhole
       return null;
     }
   }
-  if (caseSensitive) {
-    return (text) => text.includes(key);
-  }
   if (matchWholeWords && /^[\w-]+$/.test(key)) {
-    const re = new RegExp(`(^|[^\\p{L}\\p{N}_])${escapeRegExp(key)}([^\\p{L}\\p{N}_]|$)`, 'iu');
+    const re = new RegExp(`(^|[^\\p{L}\\p{N}_])${escapeRegExp(key)}([^\\p{L}\\p{N}_]|$)`, caseSensitive ? 'u' : 'iu');
     return (text) => re.test(text);
   }
+  if (caseSensitive) return (text) => text.includes(key);
   const needle = key.toLowerCase();
   return (text) => text.toLowerCase().includes(needle);
 }
 
-function matchKeys(text, keys, options) {
+function keywordOf(value) {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function indexLiteralMatches(items, scanBufferOf, backend) {
+  const folded = new Map();
+  function fold(text) {
+    if (!folded.has(text)) folded.set(text, text.toLowerCase());
+    return folded.get(text);
+  }
+  const groups = new Map();
+  for (const item of items) {
+    const { entry } = item;
+    if (item.blocked || !item.content || item.forced || entry.constant === true ||
+        entry.useRegex === true || entry.matchWholeWords === true) continue;
+    if (!Array.isArray(entry.key) || !entry.key.length) continue;
+    const text = scanBufferOf(item);
+    const caseSensitive = entry.caseSensitive === true;
+    const haystack = caseSensitive ? text : fold(text);
+    const keys = groups.get(haystack) ?? new Set();
+    groups.set(haystack, keys);
+    for (const values of [entry.key, entry.keysecondary]) {
+      for (const value of Array.isArray(values) ? values : []) {
+        const keyword = keywordOf(value);
+        if (keyword) keys.add(caseSensitive ? keyword : keyword.toLowerCase());
+      }
+    }
+  }
+  const batches = Array.from(groups, ([text, keys]) => [text, [...keys]]);
+  const results = batches.length ? (backend ?? cardAssetsWasm()).matchLorebookKeywords(batches) : null;
+  const matches = new Map(batches.map(([text, keys], index) => [
+    text, new Set(keys.filter((key, i) => results ? results[index][i] : text.includes(key))),
+  ]));
+  return (text, key, caseSensitive) => {
+    const haystack = caseSensitive ? text : fold(text);
+    const needle = caseSensitive ? key : key.toLowerCase();
+    return matches.get(haystack)?.has(needle) ?? haystack.includes(needle);
+  };
+}
+
+function matchKeys(text, keys, options, literalMatches) {
   for (const rawKey of keys) {
-    const key = typeof rawKey === 'string' ? rawKey.trim() : '';
+    const key = keywordOf(rawKey);
     if (!key) continue;
+    const delimited = key.match(/^\/([\s\S]+)\/([a-z]*)$/i);
+    if (delimited) {
+      let regex;
+      try { regex = new RegExp(delimited[1], delimited[2]); } catch { /* A malformed literal may be an ordinary key. */ }
+      if (regex) {
+        if (regex.test(text)) return key;
+        continue;
+      }
+    }
+    if (!options.useRegex && !options.matchWholeWords) {
+      if (literalMatches(text, key, options.caseSensitive)) return key;
+      continue;
+    }
     const match = buildMatcher(key, options);
     if (match && match(text)) return key;
   }
   return null;
 }
 
-function passesSecondary(text, entry, options) {
+function passesSecondary(text, entry, options, literalMatches) {
   const secondary = Array.isArray(entry.keysecondary) ? entry.keysecondary : [];
   if (!secondary.length) return true;
   const logic = Number(entry.selectiveLogic ?? WI_LOGIC.AND_ANY);
   const results = secondary
     .map((k) => (typeof k === 'string' ? k.trim() : ''))
     .filter(Boolean)
-    .map((k) => Boolean(matchKeys(text, [k], options)));
+    .map((k) => Boolean(matchKeys(text, [k], options, literalMatches)));
 
   if (!results.length) return true;
   const any = results.some(Boolean);
@@ -138,6 +192,7 @@ function filterByInclusionGroups(candidates, skipped) {
  * @param {object} input
  * @param {any[]} input.entries 世界书条目（ST 格式）
  * @param {string} input.scanText 参与扫描的文本（最近 N 楼拼起来）
+ * @param {(entry:object)=>string} [input.scanTextForEntry] 条目自己的扫描窗口及附加来源
  * @param {number} [input.budget] token 预算
  * @param {(t:string)=>number} [input.estimate] token 估算器
  * @param {() => number} [input.random] 随机源（便于测试固定）
@@ -151,6 +206,8 @@ function filterByInclusionGroups(candidates, skipped) {
 export function activateEntries({
   entries,
   scanText,
+  scanTextForEntry,
+  keywordBackend,
   budget = 2048,
   estimate = estimateTokens,
   random = Math.random,
@@ -181,6 +238,7 @@ export function activateEntries({
     const blockedByDecorator = /^\s*@@dont_activate\b/.test(raw) || (typeof isActive === 'function' && !isActive(entry));
     return {
       entry,
+      scanText: String((scanTextForEntry ? scanTextForEntry(entry) : scanText) ?? ''),
       raw,
       // 即使调用方没提供 decorateEntry，也要把强制激活的指令行去掉。
       content: stripDirective(decorated),
@@ -200,7 +258,7 @@ export function activateEntries({
   let tokensUsed = 0;
   let overflowed = false;
   let recursion = 0;
-  let scanBuffer = String(scanText ?? '');
+  let recursiveText = '';
   let rounds = 0;
 
   // 递归轮会重复判定同一条目；跳过原因按 uid+原因去重，避免统计翻倍。
@@ -214,6 +272,8 @@ export function activateEntries({
   while (true) {
     rounds += 1;
     const candidates = [];
+    const scanBufferOf = (item) => item.scanText + recursiveText;
+    const literalMatches = indexLiteralMatches(prepared, scanBufferOf, keywordBackend);
 
     for (const item of prepared) {
       const entry = item.entry;
@@ -260,9 +320,10 @@ export function activateEntries({
           caseSensitive: entry.caseSensitive === true,
           matchWholeWords: entry.matchWholeWords === true,
         };
-        matchedKey = matchKeys(scanBuffer, keys, entryOptions);
+        const scanBuffer = scanBufferOf(item);
+        matchedKey = matchKeys(scanBuffer, keys, entryOptions, literalMatches);
         if (!matchedKey) continue;
-        if (entry.selective !== false && !passesSecondary(scanBuffer, entry, entryOptions)) {
+        if (entry.selective !== false && !passesSecondary(scanBuffer, entry, entryOptions, literalMatches)) {
           recordSkip(entry, 'secondary');
           continue;
         }
@@ -347,7 +408,11 @@ export function activateEntries({
     const enough = activated.length >= (Number(minActivations) || 0);
     if (limit > 0 && recursion + 1 >= limit && enough) break;
     if (limit > 0 && recursion + 1 >= limit) break;
-    scanBuffer += '\n' + roundActivated.map((item) => item.content).join('\n');
+    const recursiveContents = roundActivated
+      .filter((item) => byUid.get(item.uid)?.entry.preventRecursion !== true)
+      .map((item) => item.content);
+    if (!recursiveContents.length) break;
+    recursiveText += '\n' + recursiveContents.join('\n');
     recursion += 1;
     if (rounds > 50) break;
   }
@@ -443,20 +508,21 @@ function normalizeRole(entry) {
 /** 计时/分组类字段的宽松归一化（ST 里这些字段有时在 extensions 下）。 */
 function normalizeTimers(entry) {
   const ext = entry?.extensions && typeof entry.extensions === 'object' ? entry.extensions : {};
-  const pick = (name) => entry[name] ?? ext[name];
+  const pick = (name, legacy = name) => entry[name] ?? entry[legacy] ?? ext[name] ?? ext[legacy];
   return {
     sticky: Number(pick('sticky')) || 0,
     cooldown: Number(pick('cooldown')) || 0,
     delay: Number(pick('delay')) || 0,
-    delayUntilRecursion: pick('delayUntilRecursion'),
-    excludeRecursion: Boolean(pick('excludeRecursion')),
+    delayUntilRecursion: pick('delayUntilRecursion', 'delay_until_recursion'),
+    excludeRecursion: Boolean(pick('excludeRecursion', 'exclude_recursion')),
+    preventRecursion: Boolean(pick('preventRecursion', 'prevent_recursion')),
     group: pick('group') ?? '',
-    groupWeight: Number(pick('groupWeight')) || 1,
-    groupOverride: Boolean(pick('groupOverride')),
-    outletName: pick('outletName') ?? ext.outletName ?? '',
+    groupWeight: Number(pick('groupWeight', 'group_weight')) || 1,
+    groupOverride: Boolean(pick('groupOverride', 'group_override')),
+    outletName: pick('outletName', 'outlet_name') ?? '',
     useProbability: Boolean(pick('useProbability')),
     probability: pick('probability') == null ? 100 : Number(pick('probability')),
-    ignoreBudget: Boolean(pick('ignoreBudget')),
+    ignoreBudget: Boolean(pick('ignoreBudget', 'ignore_budget')),
   };
 }
 
@@ -465,6 +531,7 @@ export function normalizeCharacterBookEntries(book) {
   const raw = book?.entries;
   const list = Array.isArray(raw) ? raw : (raw && typeof raw === 'object' ? Object.values(raw) : []);
   return list.map((entry, index) => {
+    if (!entry || typeof entry !== 'object') return null;
     const timers = normalizeTimers(entry);
     return {
       ...entry,
@@ -473,6 +540,8 @@ export function normalizeCharacterBookEntries(book) {
       depth: entry.depth ?? entry.extensions?.depth,
       role: normalizeRole(entry),
       enabled: entry.enabled !== false && entry.disable !== true,
+      caseSensitive: entry.caseSensitive ?? entry.extensions?.case_sensitive,
+      matchWholeWords: entry.matchWholeWords ?? entry.extensions?.match_whole_words,
       key: Array.isArray(entry.keys) ? entry.keys : (Array.isArray(entry.key) ? entry.key : []),
       keysecondary: Array.isArray(entry.secondary_keys) ? entry.secondary_keys
         : (Array.isArray(entry.keysecondary) ? entry.keysecondary : []),
@@ -481,5 +550,5 @@ export function normalizeCharacterBookEntries(book) {
       comment: entry.comment ?? entry.name ?? '',
       ...timers,
     };
-  });
+  }).filter(Boolean);
 }

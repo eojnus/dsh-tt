@@ -1,25 +1,28 @@
-# Rust / WASM 原型（阶段 0–1）
+# Rust / WASM 角色卡与世界书处理
 
-本目录是独立实验，不替换现有功能。构建时若 WASM 产物存在，会内嵌客户端供设置页手动自检，其他时候不运行。原型只实现角色卡文本的 UTF-16 长度计数，检验 Rust/WASM ABI、Unicode 及 JS 回退；它不代表完整角色卡归一化。
+Host 和面板共用内嵌的 WASM，处理 V2/V3 角色卡的文本字段、标签和备选开场白，并扫描 PNG 的 `tEXt`、未压缩 `iTXt` 块。JavaScript 根据块的位置读取原始载荷并解析卡片 JSON。两端按 `chara`、`ccv3`、`Chara`、`CCV3` 的顺序选择载荷，同名块使用最后一份。
+
+归一化后，原始卡对象、世界书和扩展继续以原引用提供。JavaScript 保留 V2/V3 包装层识别和深度字段的 `Number()` 转换语义。若 WASM 无法加载、调用失败，或某条输入含独立 UTF-16 代理项，JS 实现接管该操作。客户端「设置 → 运行自检」会报告浏览器能否加载 WASM 并执行字段归一化。
+
+世界书扫描每轮将普通关键词按扫描文本分组，交给 Rust 批量匹配。JavaScript 负责取得会话历史、计算条目的扫描来源和大小写归一化、执行 JavaScript 正则及模板，并维护世界书计时。测试覆盖 WASM 与 JS 回退的激活一致性。
+
+Rust 也负责辅助生成的提示词顺序、聊天历史裁剪和按深度插入，以及区分用于世界书扫描和用于模型提示词的脚本注入。动态楼层模板的捕获内容由 Rust 按对应的 HTML 文本、结构化数据或 JavaScript 字符串格式编码。TypeScript 负责调用 DSH 的模型、会话和鉴权服务，以及浏览器的消息和 DOM 接口。
 
 ## 构建和验证
 
-在 Windows PowerShell 中，使用本机独立工具链：
+首次构建需准备 Rust 1.89.0 或较新版本的工具链，以及对应的 `wasm32-unknown-unknown` 目标。在 Windows 上，Cargo 还需要能链接本机运行的依赖构建脚本。本次用 Windows GNU 工具链完成了构建。
 
-```powershell
-. C:\coding\rust-toolchain\env.ps1
-cargo build --manifest-path rust/prototype/Cargo.toml --target wasm32-unknown-unknown --release --target-dir build/rust-target --offline
-$node = 'C:\Users\Administrator\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe'
-& $node tests/run.mjs
-& $node tools/check.mjs
-& $node tools/benchmark-rust-prototype.mjs
+```sh
+rustup target add wasm32-unknown-unknown
+node tools/build-card-assets-wasm.mjs
+node tools/snapshot.mjs
+node tools/build-client.mjs
+node tests/run.mjs
 ```
 
-产物在被忽略的 `build/rust-target/`；运行 `tools/build-client.mjs` 会将其内嵌客户端用于手动自检。如果未构建 WASM，客户端自检会报告未包含原型，WASM 一致性测试会明确跳过；损坏和缺失的回退测试仍执行。基准使用本地参考资产（若存在），只输出时长、大小和计数，不输出卡片内容。结果受机器负载、预热和输入影响；内存是进程快照，不是峰值。
+构建脚本编译到 `build/rust-target/`，并更新随仓库分发的 `plugin/lib/card-assets-wasm-bytes.js`。客户端构建把同一份字节带入 `plugin/client.js`。只改 JavaScript 时可以直接复用仓库已有的 WASM，无需安装 Rust。
 
-## 限制
-
-适配层接受 WASM 字节并同步初始化，失败或执行异常时回退 JS 并保留错误；插件只在手动自检时调用它。Node 测试和下述隔离 DSH 检查不等于实际浏览器运行验证。计数只是 ABI 原型，不包含完整管线或性能加速。Windows 原生目标仍需 MSVC 链接工具。
+UTF-16 长度计数保留给 `node tools/benchmark-rust-prototype.mjs` 及其原型测试。生产路径的测试覆盖归一化、PNG 块解析以及 WASM 和 JS 回退的一致性。
 
 ## 隔离 DSH 验证（2026-11-15）
 

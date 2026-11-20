@@ -1,7 +1,56 @@
 // 角色卡归一化：兼容 Character Card V2（字段在顶层）与 V3（字段包在 data 里）。
 
+import { cardAssetsWasm } from './card-assets-wasm.js';
+
 const str = (v) => (typeof v === 'string' ? v : '');
 const arr = (v) => (Array.isArray(v) ? v : []);
+
+export function flattenTavernScripts(value) {
+  const scripts = arr(value);
+  if (!scripts.some((item) => item?.type === 'folder')) return scripts;
+  return scripts.flatMap((item) => {
+    if (item?.type !== 'folder') return [item];
+    const children = flattenTavernScripts(item.scripts);
+    return item.enabled === false
+      ? children.map((script) => script && { ...script, enabled: false })
+      : children;
+  });
+}
+
+const TEXT_FIELDS = {
+  name: 'name',
+  creator: 'creator',
+  characterVersion: 'character_version',
+  description: 'description',
+  personality: 'personality',
+  scenario: 'scenario',
+  firstMes: 'first_mes',
+  mesExample: 'mes_example',
+  systemPrompt: 'system_prompt',
+  postHistoryInstructions: 'post_history_instructions',
+  creatorNotes: 'creator_notes',
+  tags: 'tags',
+  alternateGreetings: 'alternate_greetings',
+};
+const isTextList = (name) => name === 'tags' || name === 'alternateGreetings';
+
+function normalizeText(inner, wasm) {
+  const fields = {};
+  for (const [name, key] of Object.entries(TEXT_FIELDS)) {
+    const value = inner[key];
+    fields[name] = isTextList(name)
+      ? arr(value).map((item) => typeof item === 'string' ? item : null)
+      : typeof value === 'string' ? value : null;
+  }
+  const normalized = wasm.normalizeText(fields);
+  if (normalized) return Object.assign(fields, normalized);
+
+  for (const name of Object.keys(fields)) {
+    fields[name] = isTextList(name) ? fields[name].filter((item) => item !== null) : str(fields[name]);
+  }
+  fields.name ||= '未命名角色';
+  return fields;
+}
 
 function pickExtension(extensions, key) {
   if (!extensions || typeof extensions !== 'object') return undefined;
@@ -12,33 +61,22 @@ function pickExtension(extensions, key) {
  * @param {any} raw 已解析的卡 JSON
  * @returns 归一化后的卡（保留原始对象在 raw 字段，写回时用）
  */
-export function normalizeCard(raw) {
+export function normalizeCard(raw, wasm = cardAssetsWasm()) {
   const isV3 = raw && typeof raw.spec === 'string' && raw.spec.startsWith('chara_card_v3') && raw.data;
   const inner = isV3 ? raw.data : raw || {};
   const extensions = inner.extensions && typeof inner.extensions === 'object' ? inner.extensions : {};
 
   const characterBook = inner.character_book ?? null;
   const th = pickExtension(extensions, 'tavern_helper') ?? null;
-  const thScripts = arr(th?.scripts);
+  const thScripts = flattenTavernScripts(th?.scripts);
   const regexScripts = arr(pickExtension(extensions, 'regex_scripts'));
   const depthPrompt = pickExtension(extensions, 'depth_prompt') ?? null;
+  const text = normalizeText(inner, wasm);
 
   return {
     spec: isV3 ? String(raw.spec) : 'chara_card_v2',
-    specVersion: str(inner.character_version),
-    name: str(inner.name) || '未命名角色',
-    creator: str(inner.creator),
-    characterVersion: str(inner.character_version),
-    description: str(inner.description),
-    personality: str(inner.personality),
-    scenario: str(inner.scenario),
-    firstMes: str(inner.first_mes),
-    mesExample: str(inner.mes_example),
-    systemPrompt: str(inner.system_prompt),
-    postHistoryInstructions: str(inner.post_history_instructions),
-    creatorNotes: str(inner.creator_notes),
-    tags: arr(inner.tags).filter((t) => typeof t === 'string'),
-    alternateGreetings: arr(inner.alternate_greetings).filter((t) => typeof t === 'string'),
+    specVersion: text.characterVersion,
+    ...text,
     characterBook,
     depthPrompt: depthPrompt && typeof depthPrompt === 'object'
       ? { prompt: str(depthPrompt.prompt), depth: Number(depthPrompt.depth) || 4, role: str(depthPrompt.role) || 'system' }

@@ -10,6 +10,8 @@
   var INIT = window.__TT_INIT__ || {};
   var TT = window.TT_CORE;
   if (!TT) throw new Error('TT_CORE 未加载');
+  var parseScript = window.acorn.parse;
+  var formatScriptRegex = window.__TT_REGEX__.formatScriptRegex;
 
   function post(message) {
     try {
@@ -31,6 +33,7 @@
     chatId: INIT.chatId || 'dsh-tt-chat',
     worldbookName: INIT.worldbookName || '角色世界书',
     worldbookEntries: INIT.worldbookEntries || [],
+    chatWorldbook: INIT.chatWorldbook,
     variables: INIT.variables || {},
     messages: INIT.messages || [],
     extensionSettings: INIT.extensionSettings || {},
@@ -54,34 +57,8 @@
   }
 
   // ── 正则脚本（显示/提示词作用域） ─────────────────────────────
-  function compileRegex(rule) {
-    if (!rule || rule.disabled) return null;
-    var find = String(rule.findRegex || '');
-    if (!find) return null;
-    var match = find.match(/^\/([\s\S]*)\/([a-z]*)$/);
-    var source = match ? match[1] : find;
-    var flags = match ? match[2] : 'g';
-    try { return new RegExp(source, flags); } catch { return null; }
-  }
-
-  function applyRegexes(text, placement, options) {
-    var out = String(text == null ? '' : text);
-    var rules = Array.isArray(INIT.regexScripts) ? INIT.regexScripts : [];
-    var isPrompt = Boolean(options && options.isPrompt);
-    for (var i = 0; i < rules.length; i += 1) {
-      var rule = rules[i];
-      if (!rule || rule.disabled) continue;
-      var placements = Array.isArray(rule.placement) ? rule.placement : [];
-      if (placement != null && placements.length && placements.indexOf(Number(placement)) < 0) continue;
-      if (isPrompt && rule.markdownOnly) continue;
-      if (!isPrompt && rule.promptOnly) continue;
-      var regex = compileRegex(rule);
-      if (!regex) continue;
-      try {
-        out = out.replace(regex, String(rule.replaceString == null ? '' : rule.replaceString));
-      } catch { /* ignore */ }
-    }
-    return out;
+  function applyRegexes(text, source, destination, options) {
+    return formatScriptRegex(text, INIT.regexScripts, source, destination, options);
   }
 
   // ── jQuery 子集 ────────────────────────────────────────────
@@ -323,11 +300,30 @@
   };
 
   $ .fn = JQ.prototype;
+  $ = window.jQuery || $;
   window.$ = $;
   window.jQuery = $;
+  var startupCallbacks = null;
+  if ($.fn && typeof $.fn.ready === 'function') {
+    var jqueryReady = $.fn.ready;
+    $.fn.ready = function (callback) {
+      if (!startupCallbacks || typeof callback !== 'function') return jqueryReady.call(this, callback);
+      var script = currentScript;
+      var selection = this;
+      startupCallbacks.push(new Promise(function (resolve) {
+        jqueryReady.call(selection, function () {
+          var element = this;
+          var args = arguments;
+          Promise.resolve().then(function () { return callback.apply(element, args); })
+            .catch(function (error) { scriptError(script, error); }).then(resolve);
+        });
+      }));
+      return this;
+    };
+  }
 
   // ── lodash 子集 ────────────────────────────────────────────
-  var _ = (function () {
+  var _ = window._ || (function () {
     function isPlainObject(value) {
       if (value == null || typeof value !== 'object') return false;
       var proto = Object.getPrototypeOf(value);
@@ -676,7 +672,7 @@
   window.getCurrentLocale = function () { return 'zh-CN'; };
   window.getMessageId = function () { return core.getCurrentMessageId(); };
   window.getScriptId = function () { return core.getCurrentScriptId(); };
-  window.getButtonEvent = function (name) { return 'th_button_' + String(name || ''); };
+  window.getButtonEvent = function (name) { return 'th_button_' + JSON.stringify([core.getCurrentScriptId(), String(name || '')]); };
   window.getScriptInfo = function () { return { id: core.getCurrentScriptId(), name: INIT.scriptName || '' }; };
   window.errorCatched = function (fn) {
     return function () {
@@ -700,10 +696,12 @@
       throw error;
     }
   };
-  window.getLorebookEntries = function (name) { return core.getLorebookEntries(name); };
+  window.getLorebookEntries = async function (name) { return core.getLorebookEntries(name); };
   window.getWorldbook = function (name) { return core.getWorldbook(name); };
   window.getWorldbookNames = function () { return core.getWorldbookNames(); };
   window.getGlobalWorldbookNames = function () { return core.getGlobalWorldbookNames(); };
+  window.getChatWorldbookName = function () { return core.getChatWorldbookName(); };
+  window.getChatLorebook = window.getChatWorldbookName;
   window.getCharWorldbookNames = function () { return core.getCharWorldbookNames(); };
   window.getCurrentCharPrimaryLorebook = function () { return core.getCurrentCharPrimaryLorebook(); };
   window.getCharLorebooks = function (type) {
@@ -713,22 +711,98 @@
     return names;
   };
   window.getLorebooks = function () { return core.getWorldbookNames().map(function (name) { return core.getWorldbook(name); }); };
-  window.getLorebookSettings = function () { return { chatLorebook: null, selectedGlobalLorebooks: [], selectedCharLorebooks: { primary: core.worldbookName, additional: [] } }; };
+  // Legacy TavernHelper options are local to this script host. The core owns
+  // the actual book bindings, and the DSH agent owns its activation pipeline.
+  var lorebookOptions = {
+    scan_depth: 4,
+    context_percentage: 25,
+    budget_cap: 0,
+    min_activations: 0,
+    max_depth: 0,
+    max_recursion_steps: 5,
+    insertion_strategy: 'character_first',
+    include_names: false,
+    recursive: true,
+    case_sensitive: false,
+    match_whole_words: false,
+    use_group_scoring: false,
+    overflow_alert: false,
+  };
+  window.getLorebookSettings = function () {
+    var globals = core.getGlobalWorldbookNames();
+    return {
+      ...lorebookOptions,
+      selected_global_lorebooks: globals,
+      chatLorebook: core.getChatWorldbookName(),
+      selectedGlobalLorebooks: globals.slice(),
+      selectedCharLorebooks: core.getCharWorldbookNames(),
+    };
+  };
+  window.setLorebookSettings = function (settings) {
+    if (!settings || typeof settings !== 'object') return;
+    Object.keys(lorebookOptions).forEach(function (key) {
+      if (Object.hasOwn(settings, key) && typeof settings[key] === typeof lorebookOptions[key]) {
+        lorebookOptions[key] = settings[key];
+      }
+    });
+  };
   window.getTavernRegexes = function () { return (INIT.regexScripts || []).slice(); };
-  window.formatAsTavernRegexedString = function (text, placement, options) { return applyRegexes(text, placement, options); };
+  window.formatAsTavernRegexedString = applyRegexes;
   window.isCharacterTavernRegexesEnabled = function () { return true; };
   window.registerMacroLike = function (name, fn) { core.registerMacro(name, fn); };
-  window.injectPrompts = function () { return {}; };
-  window.uninjectPrompts = function () { return {}; };
-  window.registerScriptButton = function (button) {
-    if (!window.__ttButtons) window.__ttButtons = [];
-    window.__ttButtons.push(button);
+  var buttonsByScript = new Map((INIT.scripts || []).map(function (script) {
+    return [script.id, script.buttons || []];
+  }));
+  function postScriptButtons() {
+    post({ tt: 'script-buttons', scripts: Array.from(buttonsByScript, function (entry) {
+      return { id: entry[0], names: (Array.isArray(entry[1]) ? entry[1] : []).filter(function (button) {
+        return button?.visible !== false && typeof button?.name === 'string' && button.name;
+      }).map(function (button) { return button.name; }) };
+    }) });
+  }
+  window.getScriptButtons = function () {
+    return structuredClone(buttonsByScript.get(core.getCurrentScriptId()) || []);
   };
-  window.getAllEnabledScriptButtons = function () { return window.__ttButtons || []; };
-  window.generate = function () { return Promise.reject(new Error('DSH 的 TH 宿主尚未接通 generate：需要 Host 侧的生成桥。')); };
-  window.generateRaw = function () { return Promise.reject(new Error('DSH 的 TH 宿主尚未接通 generateRaw：需要 Host 侧的生成桥。')); };
-  window.stopGenerationById = function () { return true; };
-  window.stopAllGeneration = function () { return true; };
+  window.replaceScriptButtons = function (buttons) {
+    buttonsByScript.set(core.getCurrentScriptId(), structuredClone(buttons));
+    postScriptButtons();
+  };
+  window.updateScriptButtonsWith = function (updater) {
+    var owner = core.getCurrentScriptId();
+    var result = updater(window.getScriptButtons());
+    function commit(buttons) {
+      buttonsByScript.set(owner, structuredClone(buttons));
+      postScriptButtons();
+      return buttons;
+    }
+    return result && typeof result.then === 'function' ? Promise.resolve(result).then(commit) : commit(result);
+  };
+  window.appendInexistentScriptButtons = function (buttons) {
+    var current = window.getScriptButtons();
+    var existing = new Set(current.map(function (button) { return button.name; }));
+    for (var button of buttons) {
+      if (existing.has(button.name)) continue;
+      existing.add(button.name);
+      current.push(button);
+    }
+    window.replaceScriptButtons(current);
+  };
+  window.registerScriptButton = function (button) {
+    window.replaceScriptButtons(window.getScriptButtons().concat(button));
+  };
+  window.getAllEnabledScriptButtons = function () {
+    return Array.from(buttonsByScript.values()).flat().filter(function (button) { return button.visible !== false; });
+  };
+  /* __DSH_GENERATION_SHIM__ */
+  var promptInjections = createPromptInjections();
+  window.injectPrompts = promptInjections.inject;
+  window.uninjectPrompts = promptInjections.uninject;
+  var generation = createGenerationBridge({ post: post, emit: eventEmit, chat: core.chat,
+    format: applyRegexes, events: window.iframe_events, collectInjections: promptInjections.collect });
+  window.generate = function (options) { return generation.generate('generate', options); };
+  window.generateRaw = function (options) { return generation.generate('generateRaw', options); };
+  window.stopGenerationById = generation.stop;
+  window.stopAllGeneration = generation.stopAll;
   window.getModelList = function () { return Promise.resolve([]); };
   window.getProxyPresetNames = function () { return Promise.resolve([]); };
   window.getPresetNames = function () { return Promise.resolve(INIT.presetName ? [INIT.presetName] : []); };
@@ -759,7 +833,14 @@
   window.isAdmin = function () { return false; };
   window.getModelList = function () { return Promise.resolve([]); };
   window.initializeGlobal = function (name) { window[name] = window[name] || {}; return window[name]; };
-  window.waitGlobalInitialized = function (name) { return Promise.resolve(window[name] || {}); };
+  window.waitGlobalInitialized = function (name) {
+    function readGlobal() { return window[name] ?? window.parent[name]; }
+    var current = readGlobal();
+    if (current != null) return Promise.resolve(current);
+    return new Promise(function (resolve) {
+      core.bus.once('global_' + name + '_initialized', function () { resolve(readGlobal()); });
+    });
+  };
   window.getTavernHelperExtensionId = function () { return 'JS-Slash-Runner'; };
   window.getExtensionType = function () { return 'local'; };
   window.getExtensionStatus = function () { return Promise.resolve({ installed: true }); };
@@ -769,7 +850,7 @@
   // 世界书写入 API：明确拒绝，避免脚本以为写成功了。
   ['createWorldbook', 'createOrReplaceWorldbook', 'deleteWorldbook', 'replaceWorldbook', 'updateWorldbookWith',
     'createWorldbookEntries', 'deleteWorldbookEntries', 'rebindGlobalWorldbooks', 'rebindCharWorldbooks',
-    'rebindChatWorldbook', 'createLorebook', 'deleteLorebook', 'setLorebookSettings',
+    'rebindChatWorldbook', 'createLorebook', 'deleteLorebook',
     'replaceLorebookEntries', 'updatelorebookEntriesWith', 'setLorebookEntries', 'createLorebookEntries',
     'deleteLorebookEntries', 'createCharacter', 'createOrReplaceCharacter', 'deleteCharacter',
     'replaceCharacter', 'updateCharacterWith', 'createOrReplacePersona', 'deletePersona', 'replacePersona',
@@ -781,7 +862,6 @@
   // ── SillyTavern 上下文 ────────────────────────────────────
   var headers = { 'Content-Type': 'application/json', 'X-CSRF-Token': 'dsh-tt' };
   var extensionPrompts = {};
-  var scriptButtons = window.__ttButtons || [];
   var functionTools = new Map();
 
   function characterCardFields() { return core.getCharacterCardFields(); }
@@ -870,9 +950,9 @@
     },
     unsetExtensionPrompt: function (id) { delete extensionPrompts[id]; return Promise.resolve(); },
     generate: window.generate,
-    generateQuietPrompt: function () { return window.generate; },
+    generateQuietPrompt: function (text) { return window.generate({ user_input: String(text || '') }); },
     generateRaw: window.generateRaw,
-    stopGeneration: function () { return true; },
+    stopGeneration: window.stopAllGeneration,
     sendSystemMessage: function (type, text) { post({ tt: 'system-message', text: String(text == null ? '' : text), type: type }); return Promise.resolve(); },
     addOneMessage: function (message) {
       return core.createChatMessages([{
@@ -951,15 +1031,17 @@
     'eventMakeLast', 'eventClearEvent', 'eventClearListener', 'eventClearAll', 'getTavernHelperVersion',
     'getTavernHelperExtensionId', 'getTavernVersion', 'formatAsDisplayedMessage', 'retrieveDisplayedMessage',
     'refreshOneMessage', 'triggerSlash', 'getLorebookEntries', 'getWorldbook', 'getWorldbookNames',
-    'getGlobalWorldbookNames', 'getCharWorldbookNames', 'getCurrentCharPrimaryLorebook', 'getCharLorebooks',
-    'getLorebooks', 'getLorebookSettings', 'getTavernRegexes', 'formatAsTavernRegexedString',
+    'getGlobalWorldbookNames', 'getChatWorldbookName', 'getChatLorebook',
+    'getCharWorldbookNames', 'getCurrentCharPrimaryLorebook', 'getCharLorebooks',
+    'getLorebooks', 'getLorebookSettings', 'setLorebookSettings', 'getTavernRegexes', 'formatAsTavernRegexedString',
     'isCharacterTavernRegexesEnabled', 'registerMacroLike', 'injectPrompts', 'uninjectPrompts', 'generate',
     'generateRaw', 'getModelList', 'getProxyPresetNames', 'stopGenerationById', 'stopAllGeneration',
     'getPresetNames', 'getLoadedPresetName', 'getPreset', 'loadPreset', 'getCharacterNames',
     'getCharacterIds', 'getCurrentCharacterName', 'getCurrentCharacterId', 'getCharData', 'getCharAvatarPath',
     'getChatHistoryBrief', 'getChatHistoryDetail', 'getPersonaNames', 'getPersonaIds', 'getCurrentPersonaName',
     'getCurrentPersonaId', 'getPersonaAvatarPath', 'getMessageId', 'errorCatched', 'getScriptId',
-    'getButtonEvent', 'getAllEnabledScriptButtons', 'initializeGlobal', 'waitGlobalInitialized', 'builtin',
+    'getButtonEvent', 'getScriptButtons', 'replaceScriptButtons', 'updateScriptButtonsWith', 'appendInexistentScriptButtons',
+    'getAllEnabledScriptButtons', 'initializeGlobal', 'waitGlobalInitialized', 'builtin',
     'isAdmin', 'getExtensionType', 'getExtensionStatus', 'isInstalledExtension', 'builtin_prompt_default_order',
     'default_preset', 'RawCharacter'].forEach(function (key) {
     if (window[key] !== undefined) TavernHelper[key] = window[key];
@@ -980,7 +1062,7 @@
   function scriptError(script, error) {
     var text = String(error && (error.stack || error.message) || error);
     scriptErrors.push({ id: script && script.id, name: script && script.name, error: text });
-    log('error', '脚本「' + (script && script.name ? script.name : '?') + '」出错：' + text.slice(0, 800));
+    log('error', '脚本「' + (script?.name || script?.id || '?') + '」出错：' + text.slice(0, 800));
   }
 
   window.addEventListener('error', function (event) {
@@ -993,7 +1075,7 @@
   window.addEventListener('error', function (event) {
     var target = event && event.target;
     var url = target && (target.src || target.href);
-    if (!url) return;
+    if (!url || target.rel === 'modulepreload') return;
     if (event.message) return;
     scriptErrors.push({ id: currentScript && currentScript.id, name: currentScript && currentScript.name, error: '资源加载失败：' + url });
     log('error', '资源加载失败：' + url);
@@ -1002,9 +1084,48 @@
     scriptError(currentScript, event.reason);
   });
 
-  function classifyModule(content) {
-    var trimmed = String(content || '').replace(/^\s*(?:\/\*[\s\S]*?\*\/\s*|\/\/[^\n]*\n\s*)*/, '');
-    return /^(?:import|export)\s/.test(trimmed);
+  function scriptMode(content) {
+    var program;
+    try {
+      program = parseScript(content, { ecmaVersion: 'latest', sourceType: 'script' });
+    } catch {
+      // A module can declare imports anywhere in its top-level statement list.
+      // Parse before executing so a syntax error cannot cause a script to run twice.
+      program = parseScript(content, { ecmaVersion: 'latest', sourceType: 'module' });
+      return { module: true, dependencies: program.body.filter(function (node) {
+        return node.source && !node.attributes?.length;
+      }).map(function (node) { return node.source.value; }) };
+    }
+    var statement = program.body[0];
+    if (program.body.length !== 1 || statement.type !== 'ExpressionStatement') return { module: false };
+    var expression = statement.expression;
+    if (expression.type === 'ImportExpression' && !expression.options) {
+      var source = expression.source;
+      if (source.type === 'Literal' && typeof source.value === 'string') {
+        return { module: true, importUrl: source.value };
+      }
+      if (source.type === 'TemplateLiteral' && source.expressions.length === 0) {
+        return { module: true, importUrl: source.quasis[0].value.cooked };
+      }
+    }
+    return { module: false };
+  }
+
+  function preloadDependencies(modes) {
+    var preloads = new Map();
+    for (var mode of modes) {
+      for (var url of (mode?.dependencies || (mode?.importUrl ? [mode.importUrl] : []))) {
+        if (!/^https:\/\//i.test(url) || preloads.has(url)) continue;
+        var link = document.createElement('link');
+        link.rel = 'modulepreload';
+        link.href = url;
+        preloads.set(url, link);
+        link.onload = function () { this.ttPreloadStatus = 'ready'; };
+        link.onerror = function () { this.ttPreloadStatus = 'error'; };
+        document.head.appendChild(link);
+      }
+    }
+    return preloads;
   }
 
   /** 在脚本启动瞬间让它看到「只有自己」的 #tavern_helper，复刻 TH 的每脚本 iframe 语义。 */
@@ -1015,40 +1136,103 @@
     helperRoot.appendChild(marker);
   }
 
-  function runScript(script) {
+  function runScript(script, mode, preloads) {
+    var content = String(script.content);
     return new Promise(function (resolve) {
-      if (!script || !script.content) { resolve(); return; }
       currentScript = script;
+      var callbacks = [];
+      startupCallbacks = callbacks;
       core.makeScriptContext(script.id, -1);
       markCurrentScript(script);
       var element = document.createElement('script');
-      var isModule = classifyModule(script.content);
-      if (isModule) element.type = 'module';
+      if (mode.module) element.type = 'module';
       element.setAttribute('data-tt-script', String(script.id || ''));
-      element.textContent = String(script.content);
+      element.textContent = content;
       var settled = false;
-      var finish = function () {
+      var timer;
+      var dependencies = mode.dependencies || (mode.importUrl ? [mode.importUrl] : []);
+      function moduleSource() {
+        var pending = dependencies.filter(function (url) {
+          return preloads.has(url) && preloads.get(url).ttPreloadStatus !== 'ready';
+        });
+        if (pending.length) return '，预载未就绪 ' + pending.slice(0, 3).join('、').slice(0, 420);
+        if (!dependencies.length) return '';
+        return '，入口 ' + dependencies[0].slice(0, 240);
+      }
+      function settle() {
         if (settled) return;
         settled = true;
+        clearTimeout(timer);
         currentScript = null;
-        resolve();
-      };
+        startupCallbacks = null;
+        resolve(mode.module);
+      }
+      function finish() {
+        if (settled) return;
+        clearTimeout(timer);
+        if (!callbacks.length) {
+          settle();
+          return;
+        }
+        // Give ready callbacks time to use their script context. A callback
+        // may await APP_READY or an event from a script later in the queue.
+        timer = setTimeout(function () {
+          log('warn', '脚本「' + (script.name || script.id) + '」初始化仍在等待，继续加载其余脚本');
+          settle();
+        }, 2000);
+        Promise.all(callbacks).then(settle);
+      }
       element.onerror = function () {
-        scriptError(script, '脚本加载失败（可能是 import 网络错误或语法错误）');
-        finish();
+        if (settled) return;
+        scriptError(script, '脚本模块加载失败（请检查导入依赖' + moduleSource() + '）');
+        settle();
       };
       element.onload = function () { finish(); };
-      document.body.appendChild(element);
-      log('info', '执行脚本「' + (script.name || script.id) + '」' + (isModule ? '（module）' : ''));
-      // 内联 classic 脚本同步执行；module 脚本要等 import 完成。给一个安全上限。
-      setTimeout(finish, isModule ? 20000 : 0);
+      log('info', '执行脚本「' + (script.name || script.id) + '」' + (mode.module ? '（module）' : ''));
+      if (mode.module) {
+        timer = setTimeout(function () {
+          scriptError(script, '脚本模块加载超时（60 秒，等待导入依赖或模块执行' + moduleSource() + '）');
+          settle();
+        }, 60000);
+      }
+      if (mode.importUrl !== undefined) {
+        import(mode.importUrl).then(finish, function (error) {
+          if (settled) return;
+          scriptError(script, error);
+          settle();
+        });
+      } else {
+        try {
+          document.body.appendChild(element);
+        } catch (error) {
+          scriptError(script, error);
+          settle();
+          return;
+        }
+        if (!mode.module) finish();
+      }
     });
   }
 
   async function runScripts() {
     var scripts = Array.isArray(INIT.scripts) ? INIT.scripts : [];
+    var modes = scripts.map(function (script) {
+      if (!script?.content) return null;
+      try { return scriptMode(String(script.content)); }
+      catch (error) { return { error: error }; }
+    });
+    var preloads = preloadDependencies(modes);
+    var hasModule = false;
     for (var i = 0; i < scripts.length; i += 1) {
-      await runScript(scripts[i]);
+      var item = scripts[i];
+      var mode = modes[i];
+      if (!mode) continue;
+      try {
+        if (mode.error) throw mode.error;
+        if (await runScript(item, mode, preloads)) hasModule = true;
+      } catch (error) {
+        scriptError(item, error);
+      }
     }
     currentScript = null;
     // 脚本可能异步注册监听；稍后补发一次就绪事件。
@@ -1063,7 +1247,7 @@
           core.bus.emit(TAVERN_EVENTS.GENERATION_STARTED, 'dsh-tt-init', {}, false);
         }
       } catch (error) { scriptError(null, error); }
-      post({ tt: 'ready', scripts: scripts.map(function (item) { return { id: item.id, name: item.name }; }), module: scripts.some(function (item) { return classifyModule(item.content); }), errors: scriptErrors.length });
+      post({ tt: 'ready', scripts: scripts.map(function (item) { return { id: item.id, name: item.name }; }), module: hasModule, errors: scriptErrors.length });
     }, 800);
   }
 
@@ -1079,6 +1263,27 @@
           break;
         case 'emit':
           core.bus.emit.apply(core.bus, [data.event].concat(data.args || []));
+          break;
+        case 'script-button': {
+          var script = (INIT.scripts || []).find(function (item) { return item.id === data.id; });
+          var buttons = buttonsByScript.get(data.id) || [];
+          if (!script || !buttons.some(function (button) { return button?.name === data.name && button.visible !== false; })) break;
+          core.makeScriptContext(script.id, -1);
+          markCurrentScript(script);
+          core.bus.emit(window.getButtonEvent(data.name));
+          break;
+        }
+        case 'generation-frame':
+          generation.receive(data);
+          break;
+        case 'collect-prompts':
+          eventEmitAndWait(TAVERN_EVENTS.GENERATION_AFTER_COMMANDS, 'normal', {}, false)
+            .then(function () { return promptInjections.collect(); })
+            .then(function (items) { post({ tt: 'prompt-injections', id: data.id, items: items }); })
+            .catch(function (error) {
+              scriptError(null, error);
+              post({ tt: 'prompt-injections', id: data.id, items: [] });
+            });
           break;
         case 'popup-result': {
           var resolve = popupPending.get(data.id);
@@ -1107,5 +1312,6 @@
   });
 
   post({ tt: 'boot', chatId: core.chatId, charName: core.charName, scriptCount: (INIT.scripts || []).length });
+  postScriptButtons();
   runScripts();
 })();

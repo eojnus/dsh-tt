@@ -13,7 +13,7 @@ import * as hostRegex from '../plugin/lib/regex.js';
 
 const bundled = await loadBundledLib();
 
-test('同构包：8 个模块齐全，且不含 node: 依赖', () => {
+test('同构包：模块齐全，且不含 node: 依赖', () => {
   for (const name of MODULES) assert.ok(bundled[name], `缺少模块 ${name}`);
   const source = bundleLibSource();
   assert.equal(/from\s*['"]node:/.test(source), false);
@@ -21,6 +21,21 @@ test('同构包：8 个模块齐全，且不含 node: 依赖', () => {
   // 生成物必须是纯脚本（可被 new Function 执行，不依赖 import/export 语法）
   assert.equal(/^\s*import\s/m.test(source), false);
   assert.equal(/^\s*export\s/m.test(source), false);
+});
+
+test('聊天楼层与世界书历史排除系统事件和用户消息的内部绑定数据', () => {
+  const { packChatInput, toChatFloors } = bundled['chat-wire'];
+  const input = packChatInput('玩家正文', { presetJson: { name: '内部预设' }, worldInfoHistory: ['内部历史'] });
+  const floors = toChatFloors([
+    { type: 'event', event: { type: 'system/message', data: { content: '仅供模型使用' } } },
+    { type: 'user/message', seq: 1, data: { content: [{ text: input.slice(0, 10) }, { text: input.slice(10) }] } },
+    { type: 'user/message', seq: 2, data: { content: '\u0000TT\u0000未完成的内部数据' } },
+    { type: 'assistant/message', seq: 3, data: { message: { content: '正常回复' } } },
+  ]);
+  assert.deepEqual(floors.map(({ role, text }) => [role, text]), [
+    ['user', '玩家正文'],
+    ['assistant', '正常回复'],
+  ]);
 });
 
 test('transformModule：具名导出被识别，相对导入被改写', () => {

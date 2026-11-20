@@ -7,9 +7,9 @@
 - **资产按需读取**：构建期只生成元数据快照；卡/预设/世界书正文由客户端通过 `workspaceFiles.readBytes` 从工作区读取，不把几 MB 的卡塞进客户端包。
 - **提示词接管**：`@dsh-tt/roleplay/agent` 挂在「角色扮演」preset 的 agent 作用域里，声明 `systemPrompt` 注入；用 ST 的固定内置段 + `prompt_order` + marker + 世界书重新生成系统提示词，并用 `agent/pre-step` 剥掉客户端信封，让会话日志只保留用户原文。
 - **EJS**：跨块渲染（`<%` 与 `%>` 可以分布在不同的 prompt/世界书条目里），兼容 `-%>`/`_%>` trim、`<%= %>` 转义、`getvar/setvar/getwi/getchar`、lodash 子集与 faker。
-- **世界书**：常量、主/次关键词四种逻辑、概率、token 预算、八种插入位置。
-- **TH 宿主**：卡里的 `extensions.tavern_helper.scripts` 在隔离 iframe 中执行；提供变量五作用域、聊天消息、事件总线、世界书读、宏、toastr、弹窗与 jQuery/lodash 子集，目标是跑通 MVU 变量框架。
-- **输出渲染**：楼层的显示作用域正则 + 输出侧 EJS（变量来自 TH 宿主）。
+- **世界书**：扫描当前输入和最近聊天，支持按条目覆盖扫描深度。独立世界书可从「世界书 → 本局世界书」绑定到会话。支持常量、关键词、递归、计时、分组、装饰器、outlet、概率和预算。普通关键词由 Rust/WASM 批量匹配。
+- **TH 宿主**：执行当前角色卡和预设里的脚本，提供变量、消息、事件与世界书 API。执行前解析脚本语法，按普通脚本或 ES 模块加载。Vue、YAML、Lodash、jQuery 和 Zod 随客户端发布。
+- **输出渲染**：先应用预设显示正则，再应用角色卡显示正则及 EJS，最后在独立 iframe 渲染楼层 HTML。开场白和资产里的固定显示模板可运行界面脚本并读取当前楼层变量。其余助手 HTML 以静态内容显示。
 - **资产面板**：角色/世界书/预设查看与启停、TH 脚本开关与状态变量、诊断日志。
 
 ## 怎么开始
@@ -29,9 +29,9 @@
 ## 已知边界（v0.2）
 
 - 深度注入（`@depth`）按 ST 语义应插进对话消息之间；DSH 的 `agent/pre-step` 只能进入 user 角色消息，因此目前把深度条目按深度降序追加在 system 段末尾。会话日志不受影响。
-- 世界书的递归扫描、sticky/cooldown/delay、inclusion group、`@@` 装饰器、outlet 尚未实现。
-- TH 的 `generate`/`generateRaw` 需要 Host 生成桥，当前明确拒绝；MVU 的默认「随AI输出」路径不依赖它。
+- 世界书默认扫描最近两条消息，条目可覆盖深度。聊天历史的可用范围取决于 DSH 的会话事件窗口。向量匹配和按 Persona 绑定仍待接入。
+- TH 的 `generate` 和 `generateRaw` 通过 DSH 的认证 Connection 路由复用当前会话模型。辅助生成支持文本、流式事件、取消、历史提示词正则和按深度插入。它有独立的模型调用，结果由脚本处理。
 - TH 的聊天编辑 API（create/delete/rotate）只改 iframe 镜像，不回写 DSH 会话（会话日志仅追加）；变量与消息变量的读写会持久化。
 - TH iframe 为兼容 `window.parent` 偏好存储使用 `allow-scripts allow-same-origin`；只运行你信任的角色卡脚本。
-- 卡内提示词作用域正则（`promptOnly`）尚未接到 Host 的请求文本上；显示作用域（`markdownOnly`）已接。
-- 采样参数只透传 DSH 支持的 temperature/maxTokens/stop；预设的 top_p/penalty 不生效。
+- Host 对用户输入和世界书使用提示词正则，辅助生成也会处理助手历史。普通 DSH 会话的生成请求由会话日志派生并冻结。面板和脚本 API 共用正则实现。
+- 模型连接和默认采样由 DSH 管理。预设采样参数映射仍待接入。

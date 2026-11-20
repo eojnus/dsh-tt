@@ -88,6 +88,22 @@ test('collectRegexRules：卡与预设都收、按 id+内容去重', () => {
   assert.equal(rules.some((rule) => rule.name === '把省略号换成全角'), true);
 });
 
+test('预设显示正则先于卡正则，支持酒馆助手的 source/destination 和深度', () => {
+  const preset = { extensions: { regex_scripts: [{
+    id: 'preset', script_name: '预设', find_regex: 'PRESET', replace_string: 'CARD',
+    source: { ai_output: true }, destination: { display: true }, max_depth: 1,
+  }] } };
+  const card = { extensions: { regex_scripts: [{
+    id: 'card', placement: [2], findRegex: 'CARD', replaceString: '完成',
+  }] } };
+  const rules = collectRegexRules(card, preset);
+  assert.equal(applyRegexScripts('PRESET', rules, 2, { depth: 1 }), '完成');
+  assert.equal(applyRegexScripts('PRESET', rules, 2, { depth: 2 }), 'PRESET');
+  assert.equal(applyRegexScripts('PRESET', rules, 2, { isPrompt: true }), 'PRESET');
+  assert.equal(applyRegexScripts('PRESET', rules, 1), 'PRESET');
+  assert.equal(applyRegexScripts('CARD', rules, 2, { depth: 8 }), '完成');
+});
+
 test('出错不影响其余规则（收集 onError）', () => {
   const bad = normalizeRegexRule({ scriptName: 'bad', findRegex: '/[/g', placement: [1] }, 0);
   const good = normalizeRegexRule({ scriptName: 'good', findRegex: '/A/g', replaceString: 'a', placement: [1] }, 1);

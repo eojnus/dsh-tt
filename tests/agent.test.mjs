@@ -138,6 +138,76 @@ test('两个会话绑定不同的卡：提示词互不污染', () => {
   assert.equal(textB.includes('注意雨声的描写'), false, 'B 的天气是晴');
 });
 
+test('世界书扫描玩家本轮输入和该会话最近的回复，尊重条目扫描深度', () => {
+  const harness = boot();
+  const agent = makeAgent('scan-chat');
+  harness.emit('agent/created', { agent });
+  const card = secondCardFixture();
+  card.character_book = { entries: [
+    { id: 1, keys: ['月海'], content: '当前输入触发条目' },
+    { id: 2, keys: ['银钟'], content: '最近回复触发条目' },
+    { id: 3, keys: ['旧地图'], content: '条目深度允许', extensions: { scan_depth: 3 } },
+    { id: 4, keys: ['旧地图'], content: '默认深度不允许' },
+    { id: 5, keys: ['月海'], content: '零深度不扫描聊天', extensions: { scan_depth: 0 } },
+    { id: 6, keys: ['书页'], content: '指定描述来源触发', extensions: { match_character_description: true } },
+    { id: 7, keys: ['/月[海潮]/'], content: '正则匹配并提到黑塔', extensions: { prevent_recursion: true } },
+    { id: 8, keys: ['黑塔'], content: '禁止递归的词不应触发' },
+  ] };
+  card.description = '书页';
+  harness.emit('agent/inbox/inserted', {
+    agent,
+    message: envelope({ cardJson: card, worldInfoHistory: ['旧地图', '银钟'] }, '月海'),
+  });
+  const system = agent.sections[0].text();
+  assert.match(system, /当前输入触发条目/);
+  assert.match(system, /最近回复触发条目/);
+  assert.match(system, /条目深度允许/);
+  assert.match(system, /指定描述来源触发/);
+  assert.match(system, /正则匹配并提到黑塔/);
+  assert.doesNotMatch(system, /默认深度不允许|零深度不扫描聊天|禁止递归的词不应触发/);
+});
+
+test('同名等长角色卡替换后，Host 使用新内容及其世界书', () => {
+  const harness = boot();
+  const agent = makeAgent('card-content-key');
+  harness.emit('agent/created', { agent });
+  const original = { ...secondCardFixture(), description: '旧版本', character_book: {
+    entries: [{ id: 1, constant: true, content: '原始条目' }],
+  } };
+  const next = { ...original, description: '新版本', character_book: {
+    entries: [{ id: 1, constant: true, content: '新版条目' }],
+  } };
+  for (const card of [original, next]) {
+    harness.emit('agent/inbox/inserted', {
+      agent,
+      message: envelope({ cardJson: card, cardHash: 'stale-client-hash' }, '继续'),
+    });
+  }
+  const system = agent.sections[0].text();
+  assert.match(system, /新版本/);
+  assert.match(system, /新版条目/);
+  assert.doesNotMatch(system, /旧版本|原始条目/);
+});
+
+test('独立世界书只在绑定会话里参与生成，且卡内与独立条目 ID 可相同', () => {
+  const harness = boot();
+  const agent = makeAgent('chat-book');
+  const other = makeAgent('without-chat-book');
+  for (const current of [agent, other]) harness.emit('agent/created', { agent: current });
+  const card = secondCardFixture();
+  card.character_book = { entries: [{ id: 7, constant: true, content: '卡内条目' }] };
+  const chatWorldbook = { id: 'world-1', name: '独立世界书', book: {
+    entries: { 7: { uid: 7, key: ['渡口'], content: '附加世界设定', sticky: 2 } },
+  } };
+  harness.emit('agent/inbox/inserted', { agent, message: envelope({ cardJson: card, chatWorldbook }, '渡口') });
+  assert.match(agent.sections[0].text(), /附加世界设定/);
+  assert.match(agent.sections[0].text(), /卡内条目/);
+  harness.emit('agent/inbox/inserted', { agent: other, message: envelope({ cardJson: card }, '渡口') });
+  assert.doesNotMatch(other.sections[0].text(), /附加世界设定/);
+  harness.emit('agent/inbox/inserted', { agent, message: envelope({ cardJson: card, chatWorldbook: null }, '渡口') });
+  assert.doesNotMatch(agent.sections[0].text(), /附加世界设定/);
+});
+
 test('pre-step：信封被剥离，只留用户原文，消息 id 不变', async () => {
   const harness = boot();
   const a = makeAgent('agent-a');
@@ -162,6 +232,16 @@ test('pre-step：没有信封时原样返回同一个 decision', async () => {
   const decision = { kind: 'enter', messages: [plain] };
   const result = await harness.emit('agent/pre-step', { agent: a }, async () => decision);
   assert.equal(result, decision);
+});
+
+test('pre-step：预设绑定失败也会移除消息中的内部数据', async () => {
+  const harness = boot();
+  const agent = makeAgent('malformed-preset');
+  const message = envelope({ presetJson: { prompts: [null] } }, '这是玩家正文');
+  const decision = { kind: 'enter', messages: [message] };
+  const result = await harness.emit('agent/pre-step', { agent }, async () => decision);
+  assert.equal(result.messages[0].content[0].text, '这是玩家正文');
+  assert.equal(result.messages[0].id, message.id);
 });
 
 test('没有 agent 时走兜底记录，不抛错', () => {

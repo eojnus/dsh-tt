@@ -17,7 +17,11 @@ const projectRoot = path.resolve(here, '..');
 const LIB = path.join(projectRoot, 'plugin', 'lib');
 
 /** 打包顺序即定义顺序（__require 会按需解析，顺序只影响可读性）。 */
-export const MODULES = ['ejs', 'macros', 'decorators', 'lorebook', 'regex', 'prompt', 'card', 'pipeline'];
+export const MODULES = [
+  'ejs', 'macros', 'decorators', 'lorebook', 'regex', 'prompt', 'pipeline',
+  'card-assets-wasm-bytes', 'card-assets-wasm', 'card', 'png',
+  'message-html', 'chat-wire',
+];
 
 const IMPORT_RE = /import\s*\{([^}]*)\}\s*from\s*['"]\.\/([\w-]+)\.js['"];?/g;
 const EXPORT_FN_RE = /^(\s*)export\s+(function|const|let|class)\s+([A-Za-z_$][\w$]*)/gm;
@@ -56,9 +60,9 @@ export function transformModule(name, source) {
 }
 
 /** 生成整份同构脚本（不写文件）。 */
-export function bundleLibSource() {
+export function bundleLibSource(modules = MODULES) {
   const parts = [];
-  for (const name of MODULES) {
+  for (const name of modules) {
     const source = fs.readFileSync(path.join(LIB, `${name}.js`), 'utf8');
     const { body, exported } = transformModule(name, source);
     const returns = exported.map((identifier) => `${identifier}: ${identifier}`).join(', ');
@@ -83,7 +87,7 @@ var TT_LIB = (function () {
 ${parts.join('\n\n')}
 
   return {
-${MODULES.map((name) => `    ${name}: __require('${name}')`).join(',\n')}
+${modules.map((name) => `    '${name}': __require('${name}')`).join(',\n')}
   };
 })();
 `;

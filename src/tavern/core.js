@@ -261,6 +261,9 @@ var TT_CORE = (function () {
     var chatId = settings.chatId || 'dsh-tt-chat';
     var worldbookName = settings.worldbookName || (card.character_book && card.character_book.name) || '角色世界书';
     var worldbookEntries = flattenEntries(settings.worldbookEntries || (card.character_book && card.character_book.entries) || []);
+    var chatWorldbookName = settings.chatWorldbook?.name || null;
+    if (chatWorldbookName === worldbookName) chatWorldbookName += '（本局）';
+    var chatWorldbookEntries = flattenEntries(settings.chatWorldbook?.entries || []);
     var initialVars = settings.variables || {};
 
     var globalVars = initialVars.global && typeof initialVars.global === 'object' ? initialVars.global : {};
@@ -740,7 +743,8 @@ var TT_CORE = (function () {
     }
 
     function getLorebookEntries(name) {
-      var book = name == null || name === worldbookName ? worldbookEntries : [];
+      var book = name == null || name === worldbookName ? worldbookEntries
+        : (name === chatWorldbookName ? chatWorldbookEntries : []);
       return book.map(clone);
     }
 
@@ -754,7 +758,7 @@ var TT_CORE = (function () {
       return { primary: worldbookName, additional: [] };
     }
 
-    function getWorldbookNames() { return [worldbookName]; }
+    function getWorldbookNames() { return chatWorldbookName ? [worldbookName, chatWorldbookName] : [worldbookName]; }
 
     function slashCommand(line) {
       var text = String(line || '').trim();
@@ -944,6 +948,7 @@ var TT_CORE = (function () {
       getWorldbook: getWorldbook,
       getWorldbookNames: getWorldbookNames,
       getGlobalWorldbookNames: function () { return []; },
+      getChatWorldbookName: function () { return chatWorldbookName; },
       getCharWorldbookNames: getCharWorldbookNames,
       getCurrentCharPrimaryLorebook: function () { return worldbookName; },
       // 其它

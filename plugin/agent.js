@@ -13,21 +13,21 @@
 //
 // 根层实例只负责让客户端模块被发现，不接管任何提示词。
 
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadLibrary, resolveActive } from './lib/library.js';
 import { createWorldInfoSession } from './lib/lorebook.js';
 import { normalizeCard } from './lib/card.js';
 import { parsePreset, applyPresetOverrides } from './lib/prompt.js';
-import { runPromptPipeline } from './lib/pipeline.js';
+import { runPromptPipeline, worldInfoHistoryLimit } from './lib/pipeline.js';
 import { applyUserInputRegex } from './lib/regex.js';
+import { splitChatInput } from './lib/chat-wire.js';
 
 export const name = 'dsh-tt-roleplay-agent';
 
 // systemPrompt 是 agent 作用域服务；不声明 inject 时 Cordis 会拒绝属性访问。
 export const inject = ['systemPrompt'];
-
-const MARK = '\u0000TT\u0000';
 
 /** 插件目录（…/dsh-tt/plugin），项目根是它的上一级。 */
 const PLUGIN_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -44,20 +44,15 @@ function shortId(agent) {
 
 /** 从一条消息里取出信封；没有则返回 null。 */
 function readEnvelope(message) {
+  const first = Array.isArray(message?.content) ? message.content[0] : null;
+  const parts = splitChatInput(typeof first === 'string' ? first : first?.text);
+  if (!parts) return null;
+  let binding = null;
   try {
-    const blocks = message?.content;
-    if (!Array.isArray(blocks) || !blocks.length) return null;
-    const first = blocks[0];
-    const text = typeof first === 'string' ? first : first?.text;
-    if (typeof text !== 'string' || !text.startsWith(MARK)) return null;
-    const end = text.indexOf(MARK, MARK.length);
-    if (end < 0) return null;
-    const binding = JSON.parse(text.slice(MARK.length, end));
-    const body = text.slice(end + MARK.length);
-    return { binding, body };
-  } catch {
-    return null;
-  }
+    const value = JSON.parse(parts.header);
+    if (value && typeof value === 'object' && !Array.isArray(value)) binding = value;
+  } catch { /* Preserve the body even if the internal header is malformed. */ }
+  return { binding, body: parts.body };
 }
 
 /** 替换消息第一个文本块的内容；保持 id / source / 其它块不变。 */
@@ -87,23 +82,8 @@ function hashOf(value) {
   return `${(hash >>> 0).toString(36)}:${source.length}`;
 }
 
-function cardKeyOf(card) {
-  return [
-    card?.name ?? '',
-    card?.description?.length ?? 0,
-    card?.firstMes?.length ?? 0,
-    card?.systemPrompt?.length ?? 0,
-    card?.characterBook?.entries?.length ?? 0,
-    card?.alternateGreetings?.length ?? 0,
-  ].join('|');
-}
-
-function presetKeyOf(preset) {
-  return [
-    preset?.name ?? '',
-    preset?.prompts?.length ?? 0,
-    preset?.order?.length ?? 0,
-  ].join('|');
+function assetKeyOf(raw) {
+  return createHash('sha256').update(signatureOf(raw)).digest('hex');
 }
 
 /** 资产根目录：显式配置优先，否则用项目根下的 参考/ 与 assets/。 */
@@ -145,6 +125,7 @@ export function apply(ctx, config = {}) {
   function createState() {
     return {
       card: null,
+      cardKey: '',
       presetBase: null,
       presetBaseKey: '',
       presetOverrides: null,
@@ -160,6 +141,12 @@ export function apply(ctx, config = {}) {
       renders: 0,
       // 世界书计时状态（sticky/cooldown/delay）按会话独立推进。
       worldInfo: createWorldInfoSession(),
+      chatWorldbook: null,
+      chatWorldbookKey: '',
+      worldInfoChat: undefined,
+      worldInfoChatKey: '',
+      scriptPrompts: [],
+      scriptPromptsKey: '',
       // 卡 + 预设自带的 ST 正则脚本（prompt 作用域用）。
       regexRules: [],
     };
@@ -180,6 +167,9 @@ export function apply(ctx, config = {}) {
       maxRecursionSteps: config.worldInfoMaxRecursion,
       minActivations: config.worldInfoMinActivations,
       greeting: state.greeting,
+      chatMessages: state.worldInfoChat,
+      chatWorldbook: state.chatWorldbook,
+      scriptPrompts: state.scriptPrompts,
     });
     state.regexRules = result.regexRules;
     state.systemText = result.systemText;
@@ -204,17 +194,18 @@ export function apply(ctx, config = {}) {
     return record.state.sectionText || '';
   }
 
-  /** 解析信封里的卡；优先按客户端给的 hash 命中缓存。 */
-  function resolveCard(binding) {
-    if (!binding?.cardJson || typeof binding.cardJson !== 'object') return null;
-    const hash = typeof binding.cardHash === 'string' ? binding.cardHash : '';
-    if (hash && cardCache.has(hash)) return cardCache.get(hash);
-    const normalized = normalizeCard(binding.cardJson);
-    if (hash) {
-      if (cardCache.size > 8) cardCache.clear();
-      cardCache.set(hash, normalized);
-    }
+  function resolveCard(raw, key) {
+    if (cardCache.has(key)) return cardCache.get(key);
+    const normalized = normalizeCard(raw);
+    if (cardCache.size >= 8) cardCache.clear();
+    cardCache.set(key, normalized);
     return normalized;
+  }
+
+  function bindCard(state, card, key) {
+    state.card = card;
+    state.cardKey = key;
+    state.worldInfo = { ...createWorldInfoSession(), turn: state.worldInfo.turn };
   }
 
   function findPresetByName(name) {
@@ -222,22 +213,22 @@ export function apply(ctx, config = {}) {
   }
 
   /** 应用一次客户端绑定。返回是否改变了该会话的提示词状态。 */
-  function applyBinding(record, binding) {
+  function applyBinding(record, binding, body) {
     if (!binding || typeof binding !== 'object') return false;
     const state = record.state;
     let changed = false;
 
     // 卡：优先整卡 JSON（导入的卡）；否则按名字在资产库里找。
     if (binding.cardJson && typeof binding.cardJson === 'object') {
-      const parsed = resolveCard(binding);
-      if (parsed && cardKeyOf(parsed) !== cardKeyOf(state.card)) {
-        state.card = parsed;
+      const key = assetKeyOf(binding.cardJson);
+      if (key !== state.cardKey) {
+        bindCard(state, resolveCard(binding.cardJson, key), key);
         changed = true;
       }
     } else if (binding.cardName && state.card?.name !== binding.cardName) {
       const found = library.cards.find((entry) => entry.card?.name === binding.cardName || entry.id === binding.cardName);
       if (found?.card) {
-        state.card = found.card;
+        bindCard(state, found.card, assetKeyOf(found.card.raw));
         changed = true;
       }
     }
@@ -245,18 +236,16 @@ export function apply(ctx, config = {}) {
     // 预设：整份 JSON / 名字 / 仅覆盖。
     let baseChanged = false;
     if (binding.presetJson && typeof binding.presetJson === 'object') {
-      const parsed = parsePreset(binding.presetJson);
-      const key = `${binding.presetHash || ''}|${presetKeyOf(parsed)}`;
+      const key = assetKeyOf(binding.presetJson);
       if (key !== state.presetBaseKey) {
-        state.presetBase = parsed;
+        state.presetBase = parsePreset(binding.presetJson);
         state.presetBaseKey = key;
         baseChanged = true;
       }
     } else if (binding.presetName) {
       const found = findPresetByName(binding.presetName);
-      const entry = library.presets.find((item) => item.name === binding.presetName || item.id === binding.presetName);
       if (found) {
-        const key = `lib|${entry?.id ?? binding.presetName}|${presetKeyOf(found)}`;
+        const key = assetKeyOf(found.raw);
         if (key !== state.presetBaseKey) {
           state.presetBase = found;
           state.presetBaseKey = key;
@@ -266,7 +255,7 @@ export function apply(ctx, config = {}) {
         const fallback = library.presets[0]?.preset ?? null;
         if (fallback) {
           state.presetBase = fallback;
-          state.presetBaseKey = `fallback|${presetKeyOf(fallback)}`;
+          state.presetBaseKey = assetKeyOf(fallback.raw);
           baseChanged = true;
         }
       }
@@ -282,7 +271,7 @@ export function apply(ctx, config = {}) {
       }
     }
 
-    if (baseChanged || overridesChanged || !state.preset) {
+    if (baseChanged || overridesChanged) {
       state.preset = state.presetBase ? applyPresetOverrides(state.presetBase, state.presetOverrides) : null;
       changed = true;
     }
@@ -300,14 +289,50 @@ export function apply(ctx, config = {}) {
       state.greeting = binding.greeting;
       changed = true;
     }
+    if (Object.hasOwn(binding, 'chatWorldbook')) {
+      const book = binding.chatWorldbook?.book;
+      const key = book && typeof book === 'object' ? assetKeyOf(binding.chatWorldbook) : '';
+      if (key !== state.chatWorldbookKey) {
+        state.chatWorldbook = key ? book : null;
+        state.chatWorldbookKey = key;
+        for (const uid of Object.keys(state.worldInfo.entries)) {
+          if (uid.startsWith('chat:')) delete state.worldInfo.entries[uid];
+        }
+        changed = true;
+      }
+    }
     if (!state.card) return changed;
 
+    const scriptPrompts = Array.isArray(binding.scriptPrompts) ? binding.scriptPrompts : [];
+    const promptsKey = scriptPrompts.length ? assetKeyOf(scriptPrompts) : '';
+    if (promptsKey !== state.scriptPromptsKey) {
+      state.scriptPrompts = scriptPrompts;
+      state.scriptPromptsKey = promptsKey;
+      changed = true;
+    }
+
+    if (typeof body === 'string') {
+      const depth = worldInfoHistoryLimit(state.card.characterBook, state.chatWorldbook);
+      const history = Array.isArray(binding.worldInfoHistory)
+        ? binding.worldInfoHistory.filter((text) => typeof text === 'string')
+        : [];
+      const chat = [state.greeting, ...history, body].filter(Boolean).slice(-depth);
+      const key = assetKeyOf(chat);
+      if (key !== state.worldInfoChatKey) {
+        state.worldInfoChat = chat;
+        state.worldInfoChatKey = key;
+        changed = true;
+      }
+    }
     const nextKey = [
-      cardKeyOf(state.card),
+      state.cardKey,
       state.presetBaseKey || '',
       state.presetOverridesKey || '',
       state.variablesHash,
       state.greeting,
+      state.worldInfoChatKey,
+      state.chatWorldbookKey,
+      state.scriptPromptsKey,
       // turn 参与 key：sticky/cooldown/delay 随回合推进，必须每回合重算。
       String(state.worldInfo.turn),
     ].join('|');
@@ -335,12 +360,12 @@ export function apply(ctx, config = {}) {
     const initial = resolveActive(library, config.activeCharacter);
     if (initial?.card) {
       record.state.card = initial.card;
-      record.state.lastKey = cardKeyOf(initial.card);
+      record.state.cardKey = assetKeyOf(initial.card.raw);
     }
     const base = config.presetName ? findPresetByName(config.presetName) : (library.presets[0]?.preset ?? null);
     if (base) {
       record.state.presetBase = base;
-      record.state.presetBaseKey = `init|${presetKeyOf(base)}`;
+      record.state.presetBaseKey = assetKeyOf(base.raw);
       record.state.preset = base;
     }
     if (record.state.card) render(record);
@@ -400,11 +425,11 @@ export function apply(ctx, config = {}) {
     ctx.on('agent/inbox/inserted', (payload) => {
       try {
         const envelope = readEnvelope(payload?.message);
-        if (!envelope) return;
+        if (!envelope?.binding) return;
         const record = recordFor(payload?.agent);
         // 一条带信封的用户消息 = 一个回合；世界书计时按它推进。
         record.state.worldInfo.turn += 1;
-        applyBinding(record, envelope.binding);
+        applyBinding(record, envelope.binding, envelope.body);
       } catch (error) {
         log('inbox/inserted 处理失败：', error?.message || error);
       }
@@ -421,33 +446,26 @@ export function apply(ctx, config = {}) {
   try {
     ctx.on('agent/pre-step', async (payload, next) => {
       const decision = await next();
+      if (decision?.kind !== 'enter' || !Array.isArray(decision.messages)) return decision;
+      const entries = decision.messages.map((message) => ({ message, envelope: readEnvelope(message) }));
+      if (!entries.some(({ envelope }) => envelope)) return decision;
+      const clean = entries.map(({ message, envelope }) => envelope ? replaceMessageText(message, envelope.body) : message);
       try {
-        if (!decision || decision.kind !== 'enter' || !Array.isArray(decision.messages)) return decision;
-        let changed = false;
-        let binding = null;
-        for (const message of decision.messages) {
-          const envelope = readEnvelope(message);
-          if (!envelope) continue;
-          changed = true;
-          if (!binding) binding = envelope.binding;
-        }
-        if (!changed) return decision;
         const record = recordFor(payload?.agent);
         // 兜底：若 inbox 事件没有触发（例如恢复会话），这里再应用一次绑定，
         // 同时让 state.regexRules 与当前卡/预设对齐。
-        if (binding) applyBinding(record, binding);
-        const messages = decision.messages.map((message) => {
-          const envelope = readEnvelope(message);
-          if (!envelope) return message;
-          const body = record.state.regexRules.length
-            ? applyUserInputRegex(envelope.body, record.state.regexRules)
-            : envelope.body;
-          return replaceMessageText(message, body);
-        });
+        const firstEnvelope = entries.find(({ envelope }) => envelope?.binding)?.envelope;
+        if (firstEnvelope) applyBinding(record, firstEnvelope.binding, firstEnvelope.body);
+        const rules = record.state.regexRules;
+        const messages = rules.length
+          ? entries.map(({ message, envelope }, index) => envelope?.binding
+            ? replaceMessageText(message, applyUserInputRegex(envelope.body, rules))
+            : clean[index])
+          : clean;
         return { ...decision, messages };
       } catch (error) {
         log('pre-step 处理失败：', error?.message || error);
-        return decision;
+        return { ...decision, messages: clean };
       }
     });
     log('已挂载 agent/pre-step（信封剥离 + 用户输入正则）。');

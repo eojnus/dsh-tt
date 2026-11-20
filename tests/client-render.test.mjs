@@ -74,6 +74,12 @@ function collectText(node) {
   return '';
 }
 
+function findTags(tree, tag) {
+  if (Array.isArray(tree)) return tree.flatMap((item) => findTags(item, tag));
+  if (!tree || typeof tree !== 'object') return [];
+  return [...(tree.tag === tag ? [tree] : []), ...findTags(tree.children, tag)];
+}
+
 test('client.js：每个页签都能渲染（含预览/正则/设置/扩展）', async () => {
   const source = fs.readFileSync(CLIENT, 'utf8');
   let captured = null;
@@ -89,6 +95,10 @@ test('client.js：每个页签都能渲染（含预览/正则/设置/扩展）',
   try {
     await import(pathToFileURL(CLIENT).href + '?views=' + Date.now());
     const { React } = makeReact();
+    const useState = React.useState;
+    let fixtures;
+    let stateIndex = 0;
+    React.useState = (initial) => useState(fixtures?.get(++stateIndex) ?? initial);
     const module = captured.factory((name) => {
       if (name === 'react') return React;
       throw new Error('意外的 require：' + name);
@@ -120,6 +130,44 @@ test('client.js：每个页签都能渲染（含预览/正则/设置/扩展）',
       if (view === 'presets') assert.match(text, /预设/);
       if (view === 'chat') assert.match(text, /新建对话|对话/);
     }
+    const raw = cardFixture();
+    const replacement = '```html\n<body><div id="status-panel">状态栏</div></body>\n```';
+    raw.data.extensions.regex_scripts = [
+      { placement: [2], markdownOnly: true, findRegex: '<StatusPlaceHolderImpl/>', replaceString: replacement },
+    ];
+    const preset = presetFixture();
+    preset.extensions.regex_scripts = [
+      { placement: [2], markdownOnly: true, findRegex: '<PresetStatus/>', replaceString: '<StatusPlaceHolderImpl/>' },
+      { placement: [2], markdownOnly: true, findRegex: '<PresetPanel/>', replaceString: '```html\n<body><div id="preset-panel">预设界面</div></body>\n```' },
+    ];
+    localStorage.getItem = (key) => key === 'dsh-tt:v3' ? JSON.stringify({
+      cards: [{ id: 'fixture-card', name: '青岚', raw }],
+      presets: [{ id: 'fixture-preset', name: '测试预设', raw: preset }],
+      lorebooks: [{ id: 'fixture-lorebook', name: '本局设定', raw: { entries: [{ content: '剧情信息' }] } }],
+      activeCardId: 'fixture-card',
+      activePresetId: 'fixture-preset',
+      sessionMeta: { 'fixture-chat': { cardId: 'fixture-card', presetId: 'fixture-preset',
+        lorebookId: 'fixture-lorebook', greeting: '开场白\n\n<PresetStatus/>' } },
+    }) : null;
+    fixtures = new Map([
+      [4, 'fixture-chat'],
+      [5, [{ id: 'floor', role: 'assistant', text: '正文\n\n<PresetStatus/>\n\n<PresetPanel/>' }]],
+    ]);
+    const registration = main.produce();
+    const selected = renderTree(registration.component({ __initialView: 'chat' }), React);
+    const frames = findTags(selected, 'iframe');
+    assert.equal(frames.length, 3, '应渲染两个联动状态栏和一个预设界面');
+    for (const frame of frames) {
+      assert.equal(frame.props.sandbox, 'allow-scripts');
+    }
+    assert.match(frames[0].props.srcDoc, /<div id="status-panel">状态栏/);
+    assert.match(frames[1].props.srcDoc, /<div id="status-panel">状态栏/);
+    assert.match(frames[2].props.srcDoc, /<div id="preset-panel">预设界面/);
+    assert.match(collectText(selected), /正文/);
+    stateIndex = 0;
+    const lore = renderTree(registration.component({ __initialView: 'lore' }), React);
+    assert.match(collectText(lore), /本局世界书/);
+    assert.ok(findTags(lore, 'select').some((select) => select.props.value === 'fixture-lorebook'));
     assert.ok(source.includes('dsh-tt:v3'));
   } finally {
     for (const key of Object.keys(saved)) globalThis[key] = saved[key];
@@ -178,6 +226,101 @@ test('client.js：模块注册、apply 注册槽位、Panel 首屏可渲染', as
     assert.ok(source.includes('dsh-tt:v3'), '客户端包应当带主 store 键');
   } finally {
     for (const key of Object.keys(saved)) globalThis[key] = saved[key];
+  }
+});
+
+test('新局渲染卡片主页，可从主页进入同一局的备选剧情', async () => {
+  const raw = cardFixture();
+  raw.data.first_mes = '【主页】';
+  raw.data.alternate_greetings = ['剧情开场甲', '剧情开场乙'];
+  raw.data.extensions.regex_scripts = [{
+    placement: [2], markdownOnly: true, findRegex: '【主页】',
+    replaceString: '```html\n<body><main id="card-home">卡片主页</main></body>\n```',
+  }];
+  const card = { id: 'card-1', name: '测试角色', filePath: 'card.json' };
+  const states = new Map();
+  const refs = [];
+  const reads = [];
+  let stateIndex;
+  let refIndex;
+  let sessions = 0;
+  let history = [];
+  let captured;
+  let main;
+  const stubs = {
+    window: { __ModuleLoader__: { load(definition) { captured = definition; } } },
+    localStorage: {
+      getItem: (key) => key === 'dsh-tt:v3' ? JSON.stringify({ cards: [card], activeCardId: card.id }) : null,
+      setItem() {}, removeItem() {},
+    },
+  };
+  const saved = Object.fromEntries(Object.keys(stubs).map((key) => [key, globalThis[key]]));
+  Object.assign(globalThis, stubs);
+  try {
+    await import(pathToFileURL(CLIENT).href + '?greeting');
+    const { React } = makeReact();
+    React.useState = (initial) => {
+      const index = stateIndex++;
+      if (!states.has(index)) states.set(index, typeof initial === 'function' ? initial() : initial);
+      return [states.get(index), (patch) => states.set(index, typeof patch === 'function' ? patch(states.get(index)) : patch)];
+    };
+    React.useRef = (initial) => (refs[refIndex++] ??= { current: initial });
+    captured.factory(() => React).apply({
+      remote: {
+        session: { create: async () => ({ sessionId: 'chat-' + ++sessions }), rename: async () => {}, list: async () => [],
+          events: async () => ({ records: history }) },
+        workspaceFiles: { readBytes: async (sessionId, filename) => {
+          reads.push([sessionId, filename]);
+          return new TextEncoder().encode(JSON.stringify(raw));
+        } },
+      },
+      slots: {
+        inject(slot, produce) { if (slot === 'main') main = produce; },
+        register(slotProps, component) { return { slotProps, component }; },
+      },
+    });
+    const registration = main();
+    const render = () => {
+      stateIndex = 0;
+      refIndex = 0;
+      return renderTree(registration.component({}), React);
+    };
+    const clickButton = (tree, label) => findTags(tree, 'button').find((button) => collectText(button).includes(label)).props.onClick();
+
+    await clickButton(render(), '新建对话');
+    assert.deepEqual(reads, [['chat-1', 'card.json']]);
+    assert.equal(states.get(0).sessionMeta['chat-1'].greeting, '【主页】');
+    const chat = render();
+    assert.doesNotMatch(collectText(chat), /选择开场白/);
+    assert.match(findTags(chat, 'iframe')[0].props.srcDoc, /id="card-home"/);
+
+    clickButton(chat, '开始剧情');
+    history = [{ type: 'event', event: { type: 'user/message' } }];
+    await clickButton(render(), '剧情开场甲');
+    assert.match(collectText(render()), /这局已经开始对话/);
+    assert.equal(states.get(0).sessionMeta['chat-1'].greeting, '【主页】');
+
+    history = [];
+    clickButton(render(), '开始剧情');
+    await clickButton(render(), '剧情开场甲');
+    assert.equal(sessions, 1);
+    assert.equal(states.get(0).sessionMeta['chat-1'].greeting, '剧情开场甲');
+    assert.match(collectText(render()), /剧情开场甲/);
+
+    clickButton(chat, '角色');
+    const cardView = render();
+    const tile = findTags(cardView, 'div').find((node) => node.props.className?.split(' ').includes('tt-card'));
+    await tile.props.onDoubleClick();
+    assert.equal(states.get(0).sessionMeta['chat-2'].greeting, '【主页】');
+    clickButton(render(), '角色');
+    clickButton(render(), '从备选开场新建');
+    const picker = render();
+    assert.match(collectText(picker), /选择开场白/);
+    assert.equal(sessions, 2);
+    await clickButton(picker, '剧情开场乙');
+    assert.equal(states.get(0).sessionMeta['chat-3'].greeting, '剧情开场乙');
+  } finally {
+    Object.assign(globalThis, saved);
   }
 });
 

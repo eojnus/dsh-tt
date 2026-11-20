@@ -1,69 +1,88 @@
-// PNG 文本块读取：从角色卡 PNG 里取出 chara / ccv3 的 base64 JSON。
-// 只实现数据兼容所需的最小集合：tEXt 与未压缩的 iTXt。
+// 读取角色卡 PNG 中的 tEXt 和未压缩 iTXt，供 Host 和面板共用。
+import { cardAssetsWasm } from './card-assets-wasm.js';
 
-const SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+const SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+const CARD_KEYWORDS = ['chara', 'ccv3', 'Chara', 'CCV3'];
 
-function decodeITXt(data) {
-  const keywordEnd = data.indexOf(0);
-  if (keywordEnd < 0) return null;
-  const keyword = data.toString('latin1', 0, keywordEnd);
-  let off = keywordEnd + 1;
-  const compressionFlag = data[off];
-  off += 2; // compression flag + method
-  const langEnd = data.indexOf(0, off);
-  if (langEnd < 0) return null;
-  off = langEnd + 1;
-  const translatedEnd = data.indexOf(0, off);
-  if (translatedEnd < 0) return null;
-  off = translatedEnd + 1;
-  if (compressionFlag === 1) return { keyword, text: null, compressed: true };
-  return { keyword, text: data.toString('utf8', off), compressed: false };
+function latin1(bytes) {
+  let text = '';
+  const step = 0x8000;
+  for (let start = 0; start < bytes.length; start += step) {
+    text += String.fromCharCode(...bytes.subarray(start, start + step));
+  }
+  return text;
 }
 
-/** 返回 { [keyword]: text }，遇到压缩块时记为 { compressed: true } 单独报告。 */
-export function readPngTextChunks(buffer) {
-  if (buffer.length < 8 || !buffer.subarray(0, 8).equals(SIGNATURE)) {
+function scanPngJs(bytes) {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const ranges = [];
+  let offset = SIGNATURE.length;
+  while (offset + 12 <= bytes.length) {
+    const start = offset + 8;
+    const end = start + view.getUint32(offset);
+    if (end + 4 > bytes.length) break;
+    const kind = latin1(bytes.subarray(offset + 4, start));
+    if (kind === 'IEND') break;
+    offset = end + 4;
+
+    if (kind !== 'tEXt' && kind !== 'iTXt') continue;
+    const data = bytes.subarray(start, end);
+    const keywordEnd = data.indexOf(0);
+    if (keywordEnd < 0) continue;
+    if (kind === 'tEXt') {
+      if (keywordEnd > 0) ranges.push([start, start + keywordEnd, start + keywordEnd + 1, end, 'latin1']);
+      continue;
+    }
+    const languageEnd = data.indexOf(0, keywordEnd + 3);
+    if (languageEnd < 0) continue;
+    const translatedEnd = data.indexOf(0, languageEnd + 1);
+    if (translatedEnd < 0) continue;
+    const encoding = data[keywordEnd + 1] === 1 ? 'compressed' : 'utf8';
+    ranges.push([start, start + keywordEnd, start + translatedEnd + 1, end, encoding]);
+  }
+  return ranges;
+}
+
+/** 读取文本块，后出现的同名文本块覆盖前面的。 */
+export function readPngTextChunks(bytes, wasm = cardAssetsWasm()) {
+  if (!SIGNATURE.every((byte, index) => bytes[index] === byte)) {
     throw new Error('不是有效的 PNG 文件');
   }
-  const chunks = {};
+  const text = new Map();
   const compressed = [];
-  let offset = 8;
-  while (offset + 12 <= buffer.length) {
-    const length = buffer.readUInt32BE(offset);
-    const type = buffer.toString('latin1', offset + 4, offset + 8);
-    const start = offset + 8;
-    const end = start + length;
-    if (end + 4 > buffer.length) break;
-    const data = buffer.subarray(start, end);
-
-    if (type === 'tEXt') {
-      const nul = data.indexOf(0);
-      if (nul > 0) chunks[data.toString('latin1', 0, nul)] = data.toString('latin1', nul + 1);
-    } else if (type === 'iTXt') {
-      const parsed = decodeITXt(data);
-      if (parsed?.compressed) compressed.push(parsed.keyword);
-      else if (parsed?.text != null) chunks[parsed.keyword] = parsed.text;
+  const utf8 = new TextDecoder('utf-8', { ignoreBOM: true });
+  for (const [start, keywordEnd, payloadStart, end, encoding] of wasm.scanPng(bytes) ?? scanPngJs(bytes)) {
+    const keyword = latin1(bytes.subarray(start, keywordEnd));
+    if (encoding === 'compressed') {
+      compressed.push(keyword);
+      continue;
     }
-
-    offset = end + 4;
-    if (type === 'IEND') break;
+    const payload = bytes.subarray(payloadStart, end);
+    text.set(keyword, encoding === 'utf8' ? utf8.decode(payload) : latin1(payload));
   }
-  return { chunks, compressed };
+  return { chunks: Object.fromEntries(text), compressed };
 }
 
-/** 从 PNG Buffer 取出角色卡 JSON（chara 优先，其次 ccv3）。 */
-export function extractCardJson(buffer) {
-  const { chunks, compressed } = readPngTextChunks(buffer);
-  const raw = chunks.chara ?? chunks.ccv3 ?? chunks.Chara ?? chunks.CCV3;
-  if (!raw) {
+function decodeBase64(text) {
+  // Match the Host's previous Buffer decoding, including URL-safe characters
+  // and missing padding, using the same API in Node and the browser.
+  const clean = text.split('=', 1)[0].replace(/[^A-Za-z0-9+/_-]/g, '').replace(/-/g, '+').replace(/_/g, '/');
+  const binary = atob(clean.length % 4 === 1 ? clean.slice(0, -1) : clean);
+  return new TextDecoder().decode(Uint8Array.from(binary, (char) => char.charCodeAt(0)));
+}
+
+export function extractCardJson(bytes, wasm = cardAssetsWasm()) {
+  const { chunks, compressed } = readPngTextChunks(bytes, wasm);
+  const key = CARD_KEYWORDS.find((keyword) => Object.hasOwn(chunks, keyword));
+  const payload = key && chunks[key];
+  if (!payload) {
     const hint = compressed.length ? `（发现压缩块 ${compressed.join(', ')}，暂不支持）` : '';
     throw new Error(`PNG 里没有 chara / ccv3 文本块${hint}`);
   }
-  const text = Buffer.from(raw, 'base64').toString('utf8');
   try {
-    return JSON.parse(text);
+    return JSON.parse(decodeBase64(payload));
   } catch {
-    // 少数卡直接写 JSON 而不做 base64
-    return JSON.parse(raw);
+    // Some cards store JSON directly, especially in an uncompressed iTXt chunk.
+    return JSON.parse(payload.replace(/^\uFEFF/, ''));
   }
 }
