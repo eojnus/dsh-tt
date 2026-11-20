@@ -21,12 +21,15 @@ import { cardAssetsWasm } from './card-assets-wasm.js';
 const EJS_ERROR_RE = /<!-- dsh-tt EJS error: ([\s\S]*?) -->/g;
 
 /** 深度/绝对注入按深度降序拼接：深度 0 最靠近对话，所以放在最后。 */
-export function composeDepthText(depth, injected) {
+export function composeDepthText(depth, injected, wasm = cardAssetsWasm()) {
   const items = [
     ...(injected || []).map((item) => ({ ...item, depth: Number(item.depth) || 0 })),
     ...(depth || []).map((item) => ({ ...item, depth: Number(item.depth) || 0 })),
   ];
-  items.sort((a, b) => (Number(b.depth) || 0) - (Number(a.depth) || 0));
+  const depths = items.map(({ depth }) => depth);
+  const order = depths.every(Number.isFinite) ? wasm?.orderPromptDepth?.(depths) : null;
+  if (order) return order.map((index) => items[index].content).filter(Boolean).join('\n\n');
+  items.sort((a, b) => b.depth - a.depth);
   return items.map((item) => item.content).filter(Boolean).join('\n\n');
 }
 
@@ -63,7 +66,7 @@ export function worldInfoHistoryLimit(book, chatWorldbook) {
     .reduce((depth, entry) => Math.max(depth, scanDepthOf(entry)), DEFAULT_SCAN_DEPTH);
 }
 
-function conversationScanner(messages, card, userDescription, injectedScan) {
+function conversationScanner(messages, card, userDescription, injectedScan, entries, wasm) {
   const history = messages.filter((value) => typeof value === 'string' && value.length > 0);
   const sources = [
     ['matchPersonaDescription', 'match_persona_description', userDescription],
@@ -74,6 +77,9 @@ function conversationScanner(messages, card, userDescription, injectedScan) {
     ['matchCreatorNotes', 'match_creator_notes', card?.creatorNotes],
   ];
   const byDepth = new Map();
+  const depths = [...new Set(entries.filter((entry) => entry && entry.enabled !== false && entry.disable !== true).map(scanDepthOf))];
+  const windows = wasm.buildLorebookScanWindows?.({ history, depths });
+  if (windows) depths.forEach((depth, index) => byDepth.set(depth, windows[index]));
   return (entry) => {
     const depth = scanDepthOf(entry);
     if (!byDepth.has(depth)) byDepth.set(depth, depth ? history.slice(-depth).reverse().join('\n') : '');
@@ -104,7 +110,7 @@ function conversationScanner(messages, card, userDescription, injectedScan) {
  * @param {object} [input.chatWorldbook] 本局绑定的独立世界书
  * @param {(kind:string, error:unknown)=>void} [input.onError]
  */
-export function runPromptPipeline(input = {}) {
+export function runPromptPipeline(input = {}, wasm = cardAssetsWasm()) {
   const card = input.card ?? null;
   const preset = input.preset ?? null;
   const variables = input.variables && typeof input.variables === 'object' ? input.variables : {};
@@ -115,7 +121,7 @@ export function runPromptPipeline(input = {}) {
   const errors = { ejs: [], regex: [] };
   const report = input.onError || (() => {});
   const scriptPrompts = input.scriptPrompts?.length
-    ? cardAssetsWasm().partitionPromptInjections(input.scriptPrompts) : null;
+    ? wasm.partitionPromptInjections(input.scriptPrompts) : null;
   const injectedScan = scriptPrompts?.scan ?? [];
 
   const regexRules = Array.isArray(input.regexRules)
@@ -135,9 +141,10 @@ export function runPromptPipeline(input = {}) {
 
   const lorebook = activateEntries({
     entries,
+    keywordBackend: wasm,
     scanText: Array.isArray(input.chatMessages) ? '' : [scanTextOf(card), ...injectedScan].filter(Boolean).join('\n'),
     scanTextForEntry: Array.isArray(input.chatMessages)
-      ? conversationScanner(input.chatMessages, card, input.userDescription, injectedScan)
+      ? conversationScanner(input.chatMessages, card, input.userDescription, injectedScan, entries, wasm)
       : undefined,
     budget,
     // ST 的顺序：装饰器先求值，再对最终正文过一次世界书正则（placement=5）。
@@ -158,13 +165,13 @@ export function runPromptPipeline(input = {}) {
   });
   for (const entry of lorebook.activated) lorebookByName.set(entry.comment, entry.content);
 
-  const rendered = renderPrompt({ card, preset, lorebook, env, ejsScope: scope });
+  const rendered = renderPrompt({ card, preset, lorebook, env, ejsScope: scope, wasm });
   if (scriptPrompts?.depth.length) {
     rendered.injected.push(...scriptPrompts.depth);
     rendered.trace.injected = rendered.injected.length;
   }
   const systemText = [rendered.system, rendered.tail].filter(Boolean).join('\n\n');
-  const depthText = composeDepthText(rendered.depth, rendered.injected);
+  const depthText = composeDepthText(rendered.depth, rendered.injected, wasm);
   const greetingBlock = greetingBlockOf(input.greeting);
   const sectionText = [systemText, depthText, greetingBlock].filter(Boolean).join('\n\n');
 

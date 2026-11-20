@@ -1052,6 +1052,9 @@
   window.TavernHelper = TavernHelper;
 
   // ── 脚本执行 ──────────────────────────────────────────────
+  var evaluateModule = window.__TT_IMPORT_MODULE__;
+  delete window.__TT_IMPORT_MODULE__;
+  var moduleSequence = 0;
   var currentScript = null;
   var scriptErrors = [];
   var helperRoot = document.createElement('div');
@@ -1060,7 +1063,8 @@
   document.body.appendChild(helperRoot);
 
   function scriptError(script, error) {
-    var text = String(error && (error.stack || error.message) || error);
+    var text = String(error && (error.stack || error.message) || error)
+      .replace(/data:text\/javascript;charset=utf-8,[^\s)]*/g, '角色脚本');
     scriptErrors.push({ id: script && script.id, name: script && script.name, error: text });
     log('error', '脚本「' + (script?.name || script?.id || '?') + '」出错：' + text.slice(0, 800));
   }
@@ -1092,7 +1096,8 @@
       // A module can declare imports anywhere in its top-level statement list.
       // Parse before executing so a syntax error cannot cause a script to run twice.
       program = parseScript(content, { ecmaVersion: 'latest', sourceType: 'module' });
-      return { module: true, dependencies: program.body.filter(function (node) {
+      var specifiers = program.body.filter(function (node) { return node.source; }).map(function (node) { return node.source; });
+      return { module: true, specifiers: specifiers, dependencies: program.body.filter(function (node) {
         return node.source && !node.attributes?.length;
       }).map(function (node) { return node.source.value; }) };
     }
@@ -1109,6 +1114,17 @@
       }
     }
     return { module: false };
+  }
+
+  function inlineModuleUrl(content, specifiers) {
+    // A data module has no relative base. Keep document-relative static imports
+    // and re-exports pointing at the same URLs as an inline script element.
+    for (var source of specifiers.slice().reverse()) {
+      if (!/^(?:\/|\.{1,2}\/)/.test(source.value)) continue;
+      var url = new URL(source.value, document.baseURI).href;
+      content = content.slice(0, source.start) + JSON.stringify(url) + content.slice(source.end);
+    }
+    return 'data:text/javascript;charset=utf-8,' + encodeURIComponent(content) + '#dsh-tt-' + (++moduleSequence);
   }
 
   function preloadDependencies(modes) {
@@ -1144,10 +1160,6 @@
       startupCallbacks = callbacks;
       core.makeScriptContext(script.id, -1);
       markCurrentScript(script);
-      var element = document.createElement('script');
-      if (mode.module) element.type = 'module';
-      element.setAttribute('data-tt-script', String(script.id || ''));
-      element.textContent = content;
       var settled = false;
       var timer;
       var dependencies = mode.dependencies || (mode.importUrl ? [mode.importUrl] : []);
@@ -1182,35 +1194,36 @@
         }, 2000);
         Promise.all(callbacks).then(settle);
       }
-      element.onerror = function () {
+      function fail(error) {
         if (settled) return;
-        scriptError(script, '脚本模块加载失败（请检查导入依赖' + moduleSource() + '）');
+        var detail = String(error?.message || error || '').replace(/data:text\/javascript;charset=utf-8,[^\s)]*/g, '角色脚本');
+        scriptError(script, '脚本模块加载或执行失败（' + detail.slice(0, 300) + moduleSource() + '）');
         settle();
-      };
-      element.onload = function () { finish(); };
+      }
       log('info', '执行脚本「' + (script.name || script.id) + '」' + (mode.module ? '（module）' : ''));
       if (mode.module) {
         timer = setTimeout(function () {
           scriptError(script, '脚本模块加载超时（60 秒，等待导入依赖或模块执行' + moduleSource() + '）');
           settle();
         }, 60000);
-      }
-      if (mode.importUrl !== undefined) {
-        import(mode.importUrl).then(finish, function (error) {
-          if (settled) return;
-          scriptError(script, error);
-          settle();
-        });
-      } else {
         try {
-          document.body.appendChild(element);
-        } catch (error) {
-          scriptError(script, error);
-          settle();
-          return;
-        }
-        if (!mode.module) finish();
+          // Inline module elements do not fire load. The import promise settles
+          // after dependencies and top-level await have finished executing.
+          evaluateModule(mode.importUrl ?? inlineModuleUrl(content, mode.specifiers)).then(finish, fail);
+        } catch (error) { fail(error); }
+        return;
       }
+      try {
+        var element = document.createElement('script');
+        element.setAttribute('data-tt-script', String(script.id || ''));
+        element.textContent = content;
+        document.body.appendChild(element);
+      } catch (error) {
+        scriptError(script, error);
+        settle();
+        return;
+      }
+      finish();
     });
   }
 

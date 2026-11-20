@@ -5,7 +5,7 @@ window.__ModuleLoader__.load({
   factory(require) {
     const React = require('react');
     const h = React.createElement;
-    const { useState, useEffect, useMemo, useRef, useCallback } = React;
+    const { useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback } = React;
 
     const SNAPSHOT = __SNAPSHOT__;
     const TAVERN_CORE_SRC = __TAVERN_CORE__;
@@ -36,155 +36,8 @@ window.__ModuleLoader__.load({
     const PREVIEW_WI_BUDGET = 32000;
 
     // ───────────────────────────── 样式 ─────────────────────────────
-    const CSS = `
-      .tt-root{position:relative;height:100%;display:flex;flex-direction:column;overflow:hidden;
-        color:var(--dsw-alias-text-primary,#1c1c1e);background:var(--dsw-alias-background-primary,#fff);
-        font-family:var(--dsw-font-family-ui,-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",sans-serif);
-        -webkit-font-smoothing:antialiased;}
-      .tt-top{height:44px;flex:none;display:flex;align-items:center;gap:10px;padding:0 12px;
-        border-bottom:1px solid var(--dsw-alias-border-secondary,rgba(0,0,0,.08));
-        background:var(--dsw-alias-background-secondary,rgba(246,246,248,.86));
-        backdrop-filter:saturate(180%) blur(18px);-webkit-backdrop-filter:saturate(180%) blur(18px);}
-      .tt-brand{display:flex;align-items:center;gap:6px;font-size:13px;font-weight:600;letter-spacing:-.01em;}
-      .tt-spacer{flex:1;}
-      .tt-chip{display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 9px;border-radius:7px;
-        border:1px solid var(--dsw-alias-border-secondary,rgba(0,0,0,.1));
-        background:var(--dsw-alias-background-primary,#fff);font-size:12px;color:inherit;
-        max-width:220px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-      .tt-chip select{border:0;background:transparent;font:inherit;color:inherit;outline:none;max-width:170px;}
-      .tt-body{flex:1;display:flex;min-height:0;}
-      .tt-side{width:248px;flex:none;display:flex;flex-direction:column;min-height:0;
-        border-right:1px solid var(--dsw-alias-border-secondary,rgba(0,0,0,.08));
-        background:var(--dsw-alias-background-secondary,rgba(250,250,252,.9));}
-      .tt-new{margin:10px 10px 6px;height:30px;border-radius:8px;border:0;cursor:pointer;font:inherit;font-size:12.5px;
-        background:var(--dsw-alias-background-accent,#0a84ff);color:#fff;font-weight:500;
-        transition:transform 140ms cubic-bezier(.23,1,.32,1),filter 140ms ease;}
-      .tt-new:active{transform:scale(.98);filter:brightness(.95);}
-      .tt-list{flex:1;overflow-y:auto;padding:0 6px 6px;}
-      .tt-row{display:flex;flex-direction:column;gap:2px;width:100%;text-align:left;border:0;border-radius:8px;
-        padding:7px 9px;margin:1px 0;background:transparent;cursor:pointer;font:inherit;color:inherit;}
-      .tt-row:hover{background:var(--dsw-alias-background-tertiary,rgba(0,0,0,.05));}
-      .tt-row.on{background:var(--dsw-alias-background-primary,#fff);box-shadow:0 1px 3px rgba(0,0,0,.08),0 0 0 1px rgba(0,0,0,.06);}
-      .tt-row b{font-size:12.5px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-      .tt-row span{font-size:11px;opacity:.55;}
-      .tt-tabs{display:flex;gap:2px;padding:6px;border-top:1px solid var(--dsw-alias-border-secondary,rgba(0,0,0,.08));}
-      .tt-tab{flex:1;height:26px;border:0;border-radius:6px;background:transparent;font:inherit;font-size:11px;
-        color:inherit;opacity:.7;cursor:pointer;padding:0 2px;}
-      .tt-tab:hover{background:var(--dsw-alias-background-tertiary,rgba(0,0,0,.05));opacity:1;}
-      .tt-tab.on{background:var(--dsw-alias-background-primary,#fff);opacity:1;font-weight:600;
-        box-shadow:0 1px 2px rgba(0,0,0,.08);}
-      .tt-main{flex:1;display:flex;flex-direction:column;min-width:0;min-height:0;}
-      .tt-pane{flex:1;overflow:auto;padding:18px 22px;min-height:0;}
-      .tt-chat{flex:1;overflow-y:auto;padding:16px 22px 8px;scroll-behavior:smooth;}
-      .tt-fl{display:flex;gap:10px;margin-bottom:14px;align-items:flex-start;}
-      .tt-av{width:26px;height:26px;flex:none;border-radius:50%;display:grid;place-items:center;
-        font-size:11px;font-weight:600;color:#fff;background:var(--dsw-alias-background-accent,#0a84ff);
-        box-shadow:0 1px 2px rgba(0,0,0,.15);}
-      .tt-bub{min-width:0;flex:1;font-size:13.5px;line-height:1.72;word-break:break-word;}
-      .tt-bub p{margin:0 0 .6em;}
-      .tt-bub p:last-child{margin-bottom:0;}
-      .tt-bub code{font-family:var(--dsw-font-family-mono,ui-monospace,Menlo,monospace);font-size:12px;
-        background:var(--dsw-alias-background-tertiary,rgba(0,0,0,.05));padding:1px 4px;border-radius:4px;}
-      .tt-bub pre{background:var(--dsw-alias-background-tertiary,rgba(0,0,0,.05));padding:10px 12px;border-radius:8px;
-        overflow:auto;font-size:12px;line-height:1.55;}
-      .tt-bub blockquote{margin:.4em 0;padding-left:10px;border-left:3px solid var(--dsw-alias-border-secondary,rgba(0,0,0,.15));opacity:.8;}
-      .tt-meta{font-size:11px;opacity:.45;margin-bottom:3px;}
-      .tt-comp{flex:none;padding:8px 16px 14px;border-top:1px solid var(--dsw-alias-border-secondary,rgba(0,0,0,.06));}
-      .tt-box{border-radius:12px;border:1px solid var(--dsw-alias-border-secondary,rgba(0,0,0,.12));
-        background:var(--dsw-alias-background-primary,#fff);padding:8px 10px;display:flex;flex-direction:column;gap:6px;
-        box-shadow:0 1px 2px rgba(0,0,0,.04);}
-      .tt-ta{width:100%;min-height:38px;max-height:180px;resize:none;border:0;outline:none;background:transparent;
-        font:inherit;font-size:13.5px;line-height:1.6;color:inherit;}
-      .tt-bar{display:flex;align-items:center;gap:4px;}
-      .tt-ic{width:26px;height:26px;border:0;border-radius:6px;background:transparent;cursor:pointer;font-size:14px;
-        color:inherit;opacity:.6;display:grid;place-items:center;}
-      .tt-ic:hover{background:var(--dsw-alias-background-tertiary,rgba(0,0,0,.05));opacity:1;}
-      .tt-send{height:26px;padding:0 12px;border:0;border-radius:6px;background:var(--dsw-alias-background-accent,#0a84ff);
-        color:#fff;font:inherit;font-size:12.5px;font-weight:500;cursor:pointer;}
-      .tt-send:disabled{opacity:.4;cursor:default;}
-      .tt-h{font-size:16px;font-weight:600;margin:0 0 4px;letter-spacing:-.01em;}
-      .tt-sub{font-size:12px;opacity:.55;margin:0 0 14px;}
-      .tt-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px;}
-      .tt-card{border:1px solid var(--dsw-alias-border-secondary,rgba(0,0,0,.1));border-radius:10px;padding:12px;
-        background:var(--dsw-alias-background-primary,#fff);cursor:pointer;transition:transform 140ms cubic-bezier(.23,1,.32,1);}
-      .tt-card:hover{box-shadow:0 2px 10px rgba(0,0,0,.07);}
-      .tt-card:active{transform:scale(.99);}
-      .tt-card.on{border-color:var(--dsw-alias-background-accent,#0a84ff);box-shadow:0 0 0 1px var(--dsw-alias-background-accent,#0a84ff);}
-      .tt-card b{display:block;font-size:13px;margin-bottom:2px;}
-      .tt-card small{font-size:11px;opacity:.55;display:block;line-height:1.5;}
-      .tt-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:8px;
-        font-size:12.5px;opacity:.5;text-align:center;padding:0 30px;line-height:1.7;}
-      .tt-diag{font-family:var(--dsw-font-family-mono,ui-monospace,monospace);font-size:11px;line-height:1.6;
-        background:var(--dsw-alias-background-tertiary,rgba(0,0,0,.04));border-radius:8px;padding:10px;overflow:auto;max-height:260px;}
-      .tt-btn{height:28px;padding:0 12px;border-radius:7px;border:1px solid var(--dsw-alias-border-secondary,rgba(0,0,0,.12));
-        background:var(--dsw-alias-background-primary,#fff);font:inherit;font-size:12px;cursor:pointer;color:inherit;}
-      .tt-btn:hover{background:var(--dsw-alias-background-tertiary,rgba(0,0,0,.04));}
-      .tt-btn:active{transform:scale(.98);}
-      .tt-inline{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
-      .tt-note{font-size:11.5px;opacity:.55;line-height:1.65;}
-      .tt-section{font-size:12px;font-weight:600;margin:18px 0 8px;letter-spacing:-.01em;}
-      .tt-line{display:flex;align-items:flex-start;gap:10px;padding:7px 8px;border-radius:8px;border:1px solid transparent;}
-      .tt-line:hover{background:var(--dsw-alias-background-tertiary,rgba(0,0,0,.035));}
-      .tt-line.on{border-color:var(--dsw-alias-border-secondary,rgba(0,0,0,.1));background:var(--dsw-alias-background-primary,#fff);}
-      .tt-line .tt-grow{flex:1;min-width:0;}
-      .tt-line b{font-size:12.5px;font-weight:500;display:block;}
-      .tt-line .tt-tagline{font-size:11px;opacity:.55;margin-top:2px;line-height:1.5;overflow:hidden;text-overflow:ellipsis;}
-      .tt-tag{display:inline-flex;align-items:center;height:18px;padding:0 5px;border-radius:5px;font-size:10px;
-        background:var(--dsw-alias-background-tertiary,rgba(0,0,0,.06));opacity:.8;margin-right:4px;}
-      .tt-tag.acc{background:rgba(10,132,255,.14);color:var(--dsw-alias-text-primary,inherit);opacity:1;}
-      .tt-pre{font-family:var(--dsw-font-family-mono,ui-monospace,monospace);font-size:11px;line-height:1.6;
-        white-space:pre-wrap;word-break:break-word;background:var(--dsw-alias-background-tertiary,rgba(0,0,0,.04));
-        border-radius:8px;padding:10px;margin:6px 0 0;max-height:260px;overflow:auto;}
-      .tt-switch{position:relative;width:30px;height:18px;flex:none;border-radius:9px;border:0;cursor:pointer;
-        background:var(--dsw-alias-border-secondary,rgba(0,0,0,.18));transition:background 140ms ease;}
-      .tt-switch:after{content:"";position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:#fff;
-        box-shadow:0 1px 2px rgba(0,0,0,.25);transition:transform 140ms cubic-bezier(.23,1,.32,1);}
-      .tt-switch.on{background:var(--dsw-alias-background-accent,#0a84ff);}
-      .tt-switch.on:after{transform:translateX(12px);}
-      .tt-search{height:28px;border-radius:7px;border:1px solid var(--dsw-alias-border-secondary,rgba(0,0,0,.12));
-        background:var(--dsw-alias-background-primary,#fff);font:inherit;font-size:12px;padding:0 10px;outline:none;color:inherit;}
-      .tt-cols{display:grid;grid-template-columns:220px minmax(0,1fr);gap:14px;align-items:start;}
-      .tt-col-list{max-height:calc(100vh - 250px);overflow:auto;border-right:1px solid var(--dsw-alias-border-secondary,rgba(0,0,0,.08));padding-right:8px;}
-      .tt-meta-line{font-size:11px;opacity:.6;margin:0 0 8px;line-height:1.6;}
-      .tt-toasts{position:fixed;right:18px;bottom:18px;z-index:60;display:flex;flex-direction:column;gap:8px;max-width:360px;}
-      .tt-toast{padding:9px 12px;border-radius:10px;font-size:12px;line-height:1.5;color:#fff;box-shadow:0 6px 20px rgba(0,0,0,.18);
-        background:rgba(28,28,30,.92);animation:tt-in 160ms cubic-bezier(.23,1,.32,1);}
-      .tt-toast.error{background:rgba(215,45,45,.94);}
-      .tt-toast.warning{background:rgba(190,120,10,.94);}
-      .tt-toast.success{background:rgba(28,140,80,.94);}
-      .tt-toast b{display:block;font-size:11px;opacity:.8;margin-bottom:2px;}
-      @keyframes tt-in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
-      .tt-modal-bg{position:fixed;inset:0;z-index:70;background:rgba(0,0,0,.32);display:flex;align-items:center;justify-content:center;padding:24px;}
-      .tt-modal{width:min(680px,92vw);max-height:80vh;overflow:auto;border-radius:12px;padding:16px;
-        background:var(--dsw-alias-background-primary,#fff);box-shadow:0 18px 60px rgba(0,0,0,.28);font-size:12.5px;line-height:1.65;}
-      .tt-modal h3{font-size:13px;margin:0 0 8px;}
-      .tt-modal .tt-modal-body{margin:0 0 12px;max-height:52vh;overflow:auto;}
-      .tt-modal input{width:100%;height:30px;border-radius:7px;border:1px solid var(--dsw-alias-border-secondary,rgba(0,0,0,.12));
-        padding:0 9px;font:inherit;margin-bottom:10px;}
-      .tt-greet{display:flex;flex-direction:column;gap:3px;width:100%;text-align:left;border:1px solid var(--dsw-alias-border-secondary,rgba(0,0,0,.1));
-        border-radius:9px;padding:10px 12px;margin:0 0 8px;background:var(--dsw-alias-background-primary,#fff);cursor:pointer;font:inherit;color:inherit;
-        transition:background 140ms ease,transform 140ms cubic-bezier(.23,1,.32,1);}
-      .tt-greet:hover{background:var(--dsw-alias-background-secondary,rgba(0,0,0,.03));}
-      .tt-greet:active{transform:scale(.995);}
-      .tt-greet b{font-size:12.5px;font-weight:600;}
-      .tt-greet span{font-size:11px;opacity:.5;}
-      .tt-greet-text{font-size:12.5px;line-height:1.6;opacity:.85;white-space:pre-wrap;margin-top:2px;}
-      .tt-search{height:26px;border-radius:7px;border:1px solid var(--dsw-alias-border-secondary,rgba(0,0,0,.12));
-        background:var(--dsw-alias-background-primary,#fff);padding:0 8px;font:inherit;font-size:12px;min-width:180px;outline:none;}
-      .tt-search:focus{border-color:var(--dsw-alias-border-accent,#0a84ff);}
-      .tt-thframe{position:absolute;left:-12000px;top:0;width:900px;height:700px;z-index:30;display:flex;flex-direction:column;
-        background:var(--dsw-alias-background-primary,#fff);overflow:hidden;}
-      .tt-thframe.on{left:0;top:0;right:0;bottom:0;width:auto;height:auto;}
-      .tt-thbar{height:36px;flex:none;display:flex;align-items:center;gap:8px;padding:0 10px;
-        border-bottom:1px solid var(--dsw-alias-border-secondary,rgba(0,0,0,.08));
-        background:var(--dsw-alias-background-secondary,rgba(246,246,248,.9));font-size:12px;}
-      .tt-thbox{flex:1;min-height:0;background:#fff;}
-      .tt-thbox iframe{width:100%;height:100%;border:0;display:block;background:#fff;}
-      .tt-message-frame{display:block;width:100%;height:160px;border:0;margin:4px 0;}
-      .tt-badge{display:inline-flex;align-items:center;height:18px;padding:0 6px;border-radius:9px;font-size:10px;
-        background:rgba(10,132,255,.14);}
-      @media (prefers-reduced-motion: reduce){.tt-root *{transition:none !important;scroll-behavior:auto !important;animation:none !important;}}
-    `;
+    const CSS = __PANEL_CSS__;
+    /* __DSH_PANEL_UI__ */
 
     // ───────────────────────────── 通用工具 ─────────────────────────────
     function hashString(text) {
@@ -363,6 +216,7 @@ window.__ModuleLoader__.load({
         })),
         activeCardId: null,
         activePresetId: null,
+        theme: 'light',
         presetOverrides: {},
         scriptOverrides: {},
         sessionMeta: {},
@@ -392,6 +246,7 @@ window.__ModuleLoader__.load({
           ...seeds,
           ...parsed,
           version: 3,
+          theme: PANEL_THEMES.some(({ id }) => id === parsed.theme) ? parsed.theme : seeds.theme,
           cards: merge(seeds.cards, parsed.cards),
           presets: merge(seeds.presets, parsed.presets),
           lorebooks: merge(seeds.lorebooks, parsed.lorebooks),
@@ -464,10 +319,14 @@ window.__ModuleLoader__.load({
     function makeBridge(ctx, log) {
       let session = null;
       let files = null;
+      let workspace = null;
+      let sessionService = null;
       try { session = ctx && ctx.remote ? ctx.remote.session : null; } catch (error) {
         log('ctx.remote.session 访问失败：' + (error && (error.message || error)));
       }
       try { files = ctx && ctx.remote ? ctx.remote.workspaceFiles : null; } catch { files = null; }
+      try { workspace = ctx?.workspaces; } catch { /* older host */ }
+      try { sessionService = ctx?.sessions; } catch { /* older host */ }
       const ok = Boolean(session);
 
       const unwrap = (response) => {
@@ -496,10 +355,30 @@ window.__ModuleLoader__.load({
         ? crypto.randomUUID()
         : 'tt-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8));
       const zone = () => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { return undefined; } };
+      const readSessionGroups = () => {
+        const snapshot = workspace?.list?.getSnapshot();
+        return { archived: snapshot?.archivedSessionIds || [], pinned: snapshot?.pinnedSessionIds || [], ready: !workspace || snapshot?.state !== 'loading' };
+      };
 
       return {
         ok,
         hasFiles: Boolean(files),
+        retainSession(id) { return sessionService?.retain(id, { source: 'dsh-tt:roleplay' }); },
+        canManageSessions: Boolean(workspace?.list),
+        readSessionGroups,
+        subscribeSessionGroups(listener) {
+          if (!workspace?.list) return undefined;
+          const update = () => listener(readSessionGroups());
+          const stop = workspace.list.subscribe(update);
+          update();
+          return stop;
+        },
+        async archiveSession(id) { await workspace.archiveSession(id); return readSessionGroups(); },
+        async restoreSession(id) { await workspace.unarchiveSession(id); return readSessionGroups(); },
+        async pinSession(id, pinned) {
+          await (pinned ? workspace.pinSession(id) : workspace.unpinSession(id));
+          return readSessionGroups();
+        },
         async list() {
           const value = await call('session/list', () => session.list({}));
           const rows = Array.isArray(value) ? value : (value && (value.sessions || value.rows || value.items)) || [];
@@ -508,10 +387,7 @@ window.__ModuleLoader__.load({
         async create(presetId) {
           return call('session/create', () => session.create({ agentPreset: presetId, cwd: STORE_ROOT }));
         },
-        async rename(sessionId, title) {
-          try { return await call('session/rename', () => session.rename({ sessionId, title })); }
-          catch { return null; }
-        },
+        async rename(sessionId, title) { return call('session/rename', () => session.rename({ sessionId, title })); },
         async prompt(sessionId, text, binding) {
           const wire = ttLib()['chat-wire'].packChatInput(text, binding);
           return call('session/prompt', () => session.prompt({
@@ -776,7 +652,8 @@ window.__ModuleLoader__.load({
     function renderMarkdown(message, keyBase, display) {
       const { text: source, slots } = message;
       if (!source) return null;
-      const blocks = ttLib()['message-html'].splitMessageBlocks(source);
+      const { splitMessageBlocks, assistantProse } = ttLib()['message-html'];
+      const blocks = splitMessageBlocks(source);
       return blocks.flatMap((block, bi) => {
         const key = `${keyBase}-${bi}`;
         if (block.type === 'html' && display) {
@@ -784,7 +661,8 @@ window.__ModuleLoader__.load({
           return h(MessageFrame, { key, html: block.text, context, onCompose: display.onCompose });
         }
         if (block.type !== 'text') return h('pre', { key }, h('code', null, block.text));
-        return block.text.trim().split(/\n{2,}/).filter(Boolean).map((paragraph, index) => {
+        const prose = message.assistant ? assistantProse(block.text) : block.text;
+        return prose.trim().split(/\n{2,}/).filter(Boolean).map((paragraph, index) => {
           const paragraphKey = `${key}-${index}`;
           if (/^>\s?/.test(paragraph)) {
             return h('blockquote', { key: paragraphKey }, renderInline(paragraph.replace(/^>\s?/gm, ''), paragraphKey));
@@ -798,12 +676,15 @@ window.__ModuleLoader__.load({
       const lib = ttLib();
       const markers = new Map();
       let prefix;
-      const output = lib.regex.applyRegexScripts(text, rules, placement, {
+      const assistant = placement === 2;
+      const source = assistant ? lib['message-html'].hideAssistantControlBlocks(text) : text;
+      const output = lib.regex.applyRegexScripts(source, rules, placement, {
         depth,
         replaceRule(input, re, rule) {
           const template = templates.get(rule);
           const replacement = String(rule.replaceString ?? '');
-          if (!template) return input.replace(re, replacement);
+          if (!template) return input.replace(re,
+            assistant ? lib['message-html'].fenceDisplayFragment(replacement) : replacement);
           return input.replace(re, (match, capture) => {
             if (typeof capture !== 'string') return match;
             const safeHtml = expandDisplaySlot(template, capture, lib['card-assets-wasm'].cardAssetsWasm());
@@ -824,7 +705,7 @@ window.__ModuleLoader__.load({
         rendered = rendered.replace(marker, () => html);
         slots.add(html);
       }
-      return { text: rendered, slots };
+      return { text: rendered, slots, assistant };
     }
 
     // ───────────────────────────── TH 宿主 ─────────────────────────────
@@ -838,7 +719,7 @@ window.__ModuleLoader__.load({
       const shimLiteral = JSON.stringify(String(TAVERN_SHIM_SRC)).replace(/</g, '\\u003c');
       return [
         '<!doctype html><html><head><meta charset="utf-8">',
-        '<style>html,body{margin:0;padding:0;background:#fff;color:#1c1c1e;font:13px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}',
+        '<style>:root{color-scheme:light dark}html,body{margin:0;padding:0;background:Canvas;color:CanvasText;font:13px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}',
         '#tt-fallback{padding:24px;font-size:12px;color:#888;}',
         '.TH-toastr{}</style></head><body>',
         '<div id="chat"></div><div id="extensions_settings"></div><div id="tt-fallback">TH 脚本界面</div>',
@@ -847,7 +728,7 @@ window.__ModuleLoader__.load({
         `<script>${parser}<\/script>`,
         `<script>(function () { ${regex}\nwindow.__TT_REGEX__ = TT_LIB.regex; })();<\/script>`,
         ttLib()['message-html'].vendorScript(TAVERN_VENDOR_SRC),
-        `<script type="module">import('data:text/javascript;base64,${TAVERN_ZOD_SRC}').then(function(zod){ window.z = zod; var script = document.createElement('script'); script.textContent = ${shimLiteral}; document.body.appendChild(script); }).catch(function(error){ window.parent.postMessage({__ttChild:true,tt:'log',level:'error',text:'酒馆助手 Zod 4 加载失败：' + String(error)}, '*'); });<\/script>`,
+        `<script type="module">import('data:text/javascript;base64,${TAVERN_ZOD_SRC}').then(function(zod){ window.z = zod; window.__TT_IMPORT_MODULE__ = url => import(url); var script = document.createElement('script'); script.textContent = ${shimLiteral}; document.body.appendChild(script); }).catch(function(error){ window.parent.postMessage({__ttChild:true,tt:'log',level:'error',text:'酒馆助手 Zod 4 加载失败：' + String(error)}, '*'); });<\/script>`,
         '</body></html>',
       ].join('\n');
     }
@@ -870,7 +751,7 @@ window.__ModuleLoader__.load({
       const frame = document.createElement('iframe');
       frame.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms allow-modals');
       frame.setAttribute('title', '酒馆助手脚本宿主');
-      frame.style.cssText = 'width:100%;height:100%;border:0;display:block;background:#fff;';
+      frame.style.cssText = 'width:100%;height:100%;border:0;display:block;background:var(--tt-surface);';
       frame.srcdoc = buildTavernSrcdoc(init);
       container.appendChild(frame);
 
@@ -989,6 +870,8 @@ window.__ModuleLoader__.load({
       const [sessions, setSessions] = useState([]);
       const [activeId, setActiveId] = useState(null);
       const [floors, setFloors] = useState([]);
+      const [liveReply, setLiveReply] = useState(null);
+      const [generating, setGenerating] = useState(false);
       const [draft, setDraft] = useState('');
       const [busy, setBusy] = useState(false);
       const [notice, setNotice] = useState('');
@@ -1013,9 +896,29 @@ window.__ModuleLoader__.load({
       const [previewSearch, setPreviewSearch] = useState('');
       const [previewCopyHint, setPreviewCopyHint] = useState('');
       const [selfTest, setSelfTest] = useState(null);
+      const [drawerOpen, setDrawerOpen] = useState(false);
+      const [scrolledAway, setScrolledAway] = useState(false);
+      const [sending, setSending] = useState(false);
+      const [clearVarsConfirm, setClearVarsConfirm] = useState(null);
+      const [sessionGroups, setSessionGroups] = useState({ archived: [], pinned: [], ready: false });
+      const [sessionSearch, setSessionSearch] = useState('');
+      const [archiveView, setArchiveView] = useState(false);
+      const [sessionSelection, setSessionSelection] = useState(null);
+      const [sessionMenu, setSessionMenu] = useState(null);
+      const [sessionDialog, setSessionDialog] = useState(null);
+      const [sessionActionBusy, setSessionActionBusy] = useState(false);
 
+      const rootRef = useRef(null);
       const chatRef = useRef(null);
       const scrollRef = useRef(null);
+      const threadRef = useRef(null);
+      const followLatestRef = useRef(true);
+      const draftRef = useRef(draft);
+      const sessionDrafts = useRef(new Map());
+      const sendingRef = useRef(false);
+      const importCardRef = useRef(null);
+      const importPresetRef = useRef(null);
+      const importLoreRef = useRef(null);
       const thFrameRef = useRef(null);
       const thHostRef = useRef(null);
       const thSentRef = useRef(false);
@@ -1027,12 +930,23 @@ window.__ModuleLoader__.load({
       const saveTimerRef = useRef(null);
       const bindingRef = useRef(null);
       const openingChangeRef = useRef(null);
+      const sessionActionRef = useRef(false);
+
+      const compact = useCompactPanel(rootRef);
+      draftRef.current = draft;
+
+      useEffect(() => {
+        if (!compact) setDrawerOpen(false);
+      }, [compact]);
 
       const log = useCallback((line) => {
         setDiag((prev) => [...prev.slice(-79), `${new Date().toLocaleTimeString()}  ${line}`]);
       }, []);
 
       const bridge = useMemo(() => (ctxRef.current ? makeBridge(ctxRef.current, log) : null), [log]);
+      const canManageSessions = bridge?.canManageSessions;
+
+      useEffect(() => bridge?.subscribeSessionGroups(setSessionGroups), [bridge]);
 
       const updateTh = useCallback((mutator) => {
         setThState((prev) => {
@@ -1089,27 +1003,120 @@ window.__ModuleLoader__.load({
         bridge.models().then((list) => setModels(Array.isArray(list) ? list.slice(0, 40) : []));
       }, [bridge]);
 
-      // 拉取当前会话事件
+      // DSH 的会话对象负责重连、重试及增量结算。旧宿主继续走历史查询。
       useEffect(() => {
         if (!activeId || !bridge?.ok) return;
-        let cancelled = false;
-        let timer = null;
-        const tick = async () => {
+        const { toChatFloors, liveAssistantReply } = ttLib()['chat-wire'];
+        const isCurrent = () => !disposed && activeIdRef.current === activeId;
+        let disposed = false;
+        let frame = null;
+        let fallbackTimer;
+        let reference;
+        let session;
+        let stopEvents;
+        let stopSession;
+        let history = [];
+        let durable = [];
+        let latestEntries;
+
+        const publishFloors = () => {
+          const recent = toChatFloors(durable);
+          const start = recent[0]?.seq;
+          const end = recent.at(-1)?.seq;
+          setFloors(start == null ? history : [...history.filter((floor) => floor.seq < start), ...recent,
+            ...history.filter((floor) => floor.seq > end)].slice(-300));
+          setLiveReply((reply) => reply && history.some((floor) => floor.replyKey === reply.key) ? null : reply);
+        };
+        const readHistory = async () => {
           try {
             const records = await bridge.events(activeId);
-            if (cancelled) return;
-            setFloors(ttLib()['chat-wire'].toChatFloors(records));
-          } catch { /* keep polling */ }
-          if (!cancelled) timer = setTimeout(tick, 1200);
+            if (!isCurrent()) return;
+            history = toChatFloors(records);
+            publishFloors();
+          } catch { /* The live connection can still deliver its own history. */ }
+          if (isCurrent()) fallbackTimer = setTimeout(checkHistory, 1200);
         };
-        tick();
-        return () => { cancelled = true; if (timer) clearTimeout(timer); };
-      }, [activeId, bridge]);
+        function checkHistory() {
+          if (!isCurrent()) return;
+          if (session?.getSnapshot().openState === 'open') fallbackTimer = setTimeout(checkHistory, 1200);
+          else readHistory();
+        }
+        try {
+          reference = bridge.retainSession(activeId);
+          if (reference) {
+            const { eventSource, session: boundSession } = reference.binding;
+            session = boundSession;
+            const update = () => {
+              if (!isCurrent() || frame != null) return;
+              frame = requestAnimationFrame(() => {
+                frame = null;
+                if (!isCurrent()) return;
+                setGenerating(Boolean(session.getSnapshot().running));
+                const entries = eventSource.getSnapshot().entries;
+                if (entries === latestEntries) return;
+                latestEntries = entries;
+                const next = entries.filter(({ event }) => event?.type === 'user/message' || event?.type === 'assistant/message');
+                if (next.length !== durable.length || next.some((entry, index) => entry !== durable[index])) {
+                  durable = next;
+                  publishFloors();
+                }
+                const reply = liveAssistantReply(entries);
+                setLiveReply(reply && !history.some((floor) => floor.replyKey === reply.key) ? reply : null);
+              });
+            };
+            reference.ready.catch(() => { /* Recovery belongs to the DSH session service. */ });
+            stopEvents = eventSource.subscribe(update);
+            stopSession = session.subscribe(update);
+            update();
+          }
+        } catch (error) {
+          stopEvents?.();
+          stopSession?.();
+          reference?.release();
+          reference = session = stopEvents = stopSession = undefined;
+          log('实时会话连接失败：' + (error?.message || error));
+        }
+        readHistory();
+        return () => {
+          disposed = true;
+          clearTimeout(fallbackTimer);
+          if (frame != null) cancelAnimationFrame(frame);
+          stopEvents?.();
+          stopSession?.();
+          reference?.release();
+        };
+      }, [activeId, bridge, log]);
 
-      useEffect(() => {
+      const scrollToLatest = useCallback(() => {
+        followLatestRef.current = true;
+        setScrolledAway(false);
         const el = scrollRef.current;
         if (el) el.scrollTop = el.scrollHeight;
-      }, [floors.length]);
+      }, []);
+
+      useLayoutEffect(() => {
+        if (view === 'chat') scrollToLatest();
+      }, [activeId, view, scrollToLatest]);
+
+      useLayoutEffect(() => {
+        if (followLatestRef.current && scrollRef.current) scrollToLatest();
+      }, [floors.length, scrollToLatest]);
+
+      useEffect(() => {
+        if (view !== 'chat' || !threadRef.current) return;
+        const observer = new ResizeObserver(() => {
+          if (followLatestRef.current && scrollRef.current) scrollToLatest();
+        });
+        observer.observe(threadRef.current);
+        return () => observer.disconnect();
+      }, [view, scrollToLatest]);
+
+      const trackScroll = useCallback((event) => {
+        const el = event.currentTarget;
+        const nearEnd = el.scrollHeight - el.clientHeight - el.scrollTop < 72;
+        followLatestRef.current = nearEnd;
+        setScrolledAway(!nearEnd);
+      }, []);
 
       // ── 资产加载 ───────────────────────────────────────────────
       const readScopeSession = useCallback(() => {
@@ -1214,9 +1221,27 @@ window.__ModuleLoader__.load({
         return card ? { cardId: card.id, presetId: store.activePresetId } : null;
       }, [store.cards, store.activePresetId]);
 
+      const switchConversation = useCallback((id) => {
+        const previousId = activeIdRef.current;
+        if (previousId !== id) {
+          if (previousId && draftRef.current) sessionDrafts.current.set(previousId, draftRef.current);
+          else if (previousId) sessionDrafts.current.delete(previousId);
+          const next = sessionDrafts.current.get(id) || '';
+          draftRef.current = next;
+          setDraft(next);
+          setFloors([]);
+          setLiveReply(null);
+          setGenerating(false);
+          setNotice('');
+        }
+        activeIdRef.current = id;
+        setActiveId(id);
+      }, []);
+
       const selectSession = useCallback((session) => {
-        activeIdRef.current = session.id;
-        setActiveId(session.id);
+        setDrawerOpen(false);
+        setSessionMenu(null);
+        switchConversation(session.id);
         setView('chat');
         const meta = store.sessionMeta[session.id] || inferMetaFromTitle(session.title);
         if (meta?.cardId && store.cards.some((card) => card.id === meta.cardId)) {
@@ -1229,13 +1254,16 @@ window.__ModuleLoader__.load({
         if (meta && !store.sessionMeta[session.id]) {
           patchStore({ sessionMeta: { ...store.sessionMeta, [session.id]: meta } });
         }
-      }, [store.sessionMeta, store.cards, store.presets, inferMetaFromTitle, patchStore]);
+      }, [store.sessionMeta, store.cards, store.presets, inferMetaFromTitle, patchStore, switchConversation]);
 
       useEffect(() => {
-        if (activeIdRef.current) return;
-        const latest = sessions.find((session) => session.title.startsWith(RP_PREFIX));
+        if (sessionActionBusy || (canManageSessions && !sessionGroups.ready)) return;
+        const active = activeIdRef.current;
+        if (active && !sessionGroups.archived.includes(active)) return;
+        const latest = sessions.find((session) => !sessionGroups.archived.includes(session.id) && session.title.startsWith(RP_PREFIX));
         if (latest) selectSession(latest);
-      }, [sessions, selectSession]);
+        else if (active) switchConversation(null);
+      }, [sessions, sessionGroups, canManageSessions, sessionActionBusy, selectSession, switchConversation]);
 
       /** 新局默认使用角色卡的首条消息。 */
       const openChat = useCallback(async (card, greetingText) => {
@@ -1251,11 +1279,10 @@ window.__ModuleLoader__.load({
           const id = created?.sessionId ?? created?.id ?? created?.address?.sessionId ?? null;
           if (!id) { log('已创建会话但没拿到 id：' + JSON.stringify(created).slice(0, 240)); return; }
           const greeting = greetingText ?? greetingOptionsOf(await ensureCard(card, id))[0]?.text ?? '';
-          setActiveId(id);
-          activeIdRef.current = id;
-          if (created?.sessionId) await bridge.rename(id, title);
+          switchConversation(id);
+          if (created?.sessionId) await bridge.rename(id, title).catch(() => {});
           setView('chat');
-          setFloors([]);
+          setDrawerOpen(false);
           thSentRef.current = false;
           patchStore((prev) => ({
             activeCardId: card.id,
@@ -1271,9 +1298,13 @@ window.__ModuleLoader__.load({
           log(message);
           setNotice(message);
         } finally { setBusy(false); }
-      }, [bridge, ensureCard, patchStore, refreshSessions, log]);
+      }, [bridge, ensureCard, patchStore, refreshSessions, log, switchConversation]);
 
-      const newChat = useCallback(() => openChat(activeCard), [openChat, activeCard]);
+      const navigate = useCallback((nextView) => {
+        setView(nextView);
+        setDrawerOpen(false);
+      }, []);
+      const newChat = useCallback(() => activeCard ? openChat(activeCard) : navigate('cards'), [openChat, activeCard, navigate]);
 
       const canChooseOpening = bridge?.ok && activeId && sessionMeta?.cardId === activeCard?.id
         && alternateOpenings.length > 0 && !floors.length;
@@ -1748,34 +1779,49 @@ window.__ModuleLoader__.load({
 
       // ── 发送 ──────────────────────────────────────────────────
       const send = useCallback(async (input) => {
-        const text = (typeof input === 'string' ? input : draft).trim();
-        if (!text || !activeId || busy || openingChangeRef.current === activeId) return false;
+        const draftAtStart = draftRef.current;
+        const text = (typeof input === 'string' ? input : draftAtStart).trim();
+        if (!text || !activeId || !bridge?.ok || busy || sendingRef.current || openingChangeRef.current === activeId) return false;
         if (!isRoleplaySession) {
           setNotice('这不是角色扮演会话：信封会被写进普通会话的日志。请点「新建对话」创建一局，或切换到 RP · 开头的会话。');
           return false;
         }
+        sendingRef.current = true;
+        setSending(true);
         setBusy(true);
         try {
           const binding = await buildBinding(activeId, true);
           if (activeIdRef.current !== activeId) return false;
-          setDraft('');
-          setFloors((prev) => [...prev, { id: `local-${Date.now()}`, role: 'user', text, seq: -1, time: Date.now() }]);
           await bridge.prompt(activeId, text, binding);
+          if (activeIdRef.current === activeId) {
+            setDraft((current) => current === draftAtStart ? '' : current);
+            setNotice('');
+            scrollToLatest();
+          } else if (sessionDrafts.current.get(activeId) === draftAtStart) {
+            sessionDrafts.current.delete(activeId);
+          }
           return true;
         } catch (error) {
           log(`发送失败：${error?.code || error?.message || error}`);
-          pushToast('error', String(error?.message || error), '发送失败');
+          if (activeIdRef.current === activeId) {
+            if (typeof input === 'string') setDraft((current) => current === draftAtStart ? text : current);
+            setNotice('发送失败，草稿已保留。' + String(error?.message || error));
+          }
           return false;
-        } finally { setBusy(false); }
-      }, [draft, activeId, busy, bridge, buildBinding, log, pushToast, isRoleplaySession]);
+        } finally {
+          sendingRef.current = false;
+          setSending(false);
+          setBusy(false);
+        }
+      }, [activeId, busy, bridge, buildBinding, log, isRoleplaySession, scrollToLatest]);
 
       const composeFromMessage = useCallback((text, submit) => {
         if (activeIdRef.current !== activeId || !isRoleplaySession || !text.trim()) return false;
         const compose = (current) => [current.trim(), text.trim()].filter(Boolean).join('\n');
-        if (submit && !busy) return send(compose(draft));
+        if (submit && !busy) return send(compose(draftRef.current));
         setDraft(compose);
         return !submit;
-      }, [activeId, isRoleplaySession, busy, draft, send]);
+      }, [activeId, isRoleplaySession, busy, send]);
 
       // ── 导入 / 导出 ───────────────────────────────────────────
       const importFiles = useCallback(async (event) => {
@@ -1842,14 +1888,15 @@ window.__ModuleLoader__.load({
         }
       }, [store, patchStore, log, presetSessionId, activeCard?.id]);
 
-      const exportActive = useCallback(async () => {
-        const payload = activePreset ? (await ensurePreset(activePreset)) : (await ensureCard(activeCard));
+      const exportActive = useCallback(async (kind) => {
+        const asset = kind === 'preset' ? activePreset : activeCard;
+        const payload = await (kind === 'preset' ? ensurePreset(asset) : ensureCard(asset));
         if (!payload) { log('导出失败：资产没有加载'); return; }
         const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `${(activePreset || activeCard)?.name || 'export'}.json`;
+        a.download = `${asset?.name || 'export'}.json`;
         a.click();
         URL.revokeObjectURL(url);
       }, [activePreset, activeCard, ensurePreset, ensureCard, log]);
@@ -1858,7 +1905,8 @@ window.__ModuleLoader__.load({
       const literalDisplays = useMemo(() => ttLib()['message-html'].literalAssetDisplays(displayRules), [displayRules]);
       const dynamicDisplays = useMemo(() => compileDisplaySlots(displayRules, ttLib()['message-html']), [displayRules]);
 
-      const renderFloors = () => {
+      const renderedFloors = useMemo(() => {
+        if (view !== 'chat') return null;
         const nodes = [];
         if (greeting) {
           const rawGreeting = (thState.overrides?.[activeId] || {})[0] || greeting;
@@ -1868,14 +1916,16 @@ window.__ModuleLoader__.load({
             greeting: true, context: { index: 0, variables: greetingVars, compose: true }, literals: literalDisplays,
             onCompose: composeFromMessage,
           };
-          nodes.push(h('div', { key: 'greeting', className: 'tt-fl' },
-            h('div', { className: 'tt-av' }, String(activeCard?.name ?? 'AI').slice(0, 1)),
-            h('div', { style: { minWidth: 0, flex: 1 } },
-              h('div', { className: 'tt-meta' }, `${activeCard?.name ?? '角色'} · 开场白`),
-              canChooseOpening ? h('button', {
-                className: 'tt-btn', disabled: busy, style: { marginBottom: 8 },
-                onClick: () => setGreetingPick({ card: activeCard, options: alternateOpenings, sessionId: activeId }),
-              }, alternateOpenings.some((option) => option.text === greeting) ? '更换剧情开场' : '开始剧情') : null,
+          nodes.push(h('article', { key: 'greeting', className: 'tt-fl' },
+            h('div', { className: 'tt-av', 'aria-hidden': true }, String(activeCard?.name ?? 'AI').slice(0, 1)),
+            h('div', { className: 'tt-msg-content tt-opening' },
+              h('header', { className: 'tt-meta' },
+                h('span', null, h('b', null, activeCard?.name ?? '角色'), ' · 开场白'),
+                canChooseOpening ? h('button', {
+                  className: 'tt-btn tt-primary', disabled: busy,
+                  onClick: () => setGreetingPick({ card: activeCard, options: alternateOpenings, sessionId: activeId }),
+                }, alternateOpenings.some((option) => option.text === greeting) ? '更换剧情开场' : '开始剧情') : null,
+              ),
               h('div', { className: 'tt-bub' }, renderMarkdown(greetingText, 'greeting', display)),
             ),
           ));
@@ -1892,100 +1942,209 @@ window.__ModuleLoader__.load({
             context: { index: varIndex, variables: floorVars, compose: true }, literals: literalDisplays,
             onCompose: composeFromMessage,
           };
-          nodes.push(h('div', { key: floor.id, className: 'tt-fl' },
-            h('div', { className: 'tt-av' }, floor.role === 'user' ? '你' : String(activeCard?.name ?? 'AI').slice(0, 1)),
-            h('div', { style: { minWidth: 0, flex: 1 } },
-              h('div', { className: 'tt-meta' },
-                `${floor.role === 'user' ? '你' : (activeCard?.name ?? '角色')}${floor.time ? ' · ' + new Date(floor.time).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) : ''}`),
+          const user = floor.role === 'user';
+          nodes.push(h('article', { key: floor.replyKey || floor.id, className: 'tt-fl' + (user ? ' user' : '') },
+            user ? null : h('div', { className: 'tt-av', 'aria-hidden': true }, String(activeCard?.name ?? 'AI').slice(0, 1)),
+            h('div', { className: 'tt-msg-content' },
+              h('header', { className: 'tt-meta' }, h('b', null, user ? '你' : (activeCard?.name ?? '角色')),
+                floor.time ? h('span', null, new Date(floor.time).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })) : null),
+              user ? null : h(AssistantReasoning, { text: floor.reasoning }),
               h('div', { className: 'tt-bub' }, renderMarkdown(text, floor.id, display)),
             ),
           ));
         });
         return nodes;
+      }, [view, activeId, activeCard, alternateOpenings, busy, canChooseOpening, composeFromMessage, displayRules,
+        dynamicDisplays, floors, greeting, isRoleplaySession, literalDisplays, thState.messages, thState.overrides, ttVars]);
+
+      const visibleSessions = useMemo(() => {
+        const query = sessionSearch.trim().toLocaleLowerCase();
+        const byId = new Map(sessions.map((row) => [row.id, row]));
+        const archived = new Set(sessionGroups.archived);
+        const pinned = new Set(sessionGroups.pinned);
+        const rows = archiveView
+          ? sessionGroups.archived.map((id) => byId.get(id) || { id, title: '' })
+          : [...sessionGroups.pinned.filter((id) => byId.has(id) && !archived.has(id)).map((id) => byId.get(id)),
+            ...sessions.filter(({ id }) => !archived.has(id) && !pinned.has(id))];
+        return rows.filter((row) => !query || sessionTitle(row).toLocaleLowerCase().includes(query)).slice(0, 200);
+      }, [sessions, sessionGroups, archiveView, sessionSearch]);
+
+      const allVisibleSelected = visibleSessions.length > 0 && visibleSessions.every(({ id }) => sessionSelection?.has(id));
+      const toggleSelectedSession = (id) => setSessionSelection((previous) => {
+        if (!previous) return null;
+        const next = new Set(previous);
+        if (next.has(id)) next.delete(id); else next.add(id);
+        return next;
+      });
+      const toggleAllVisibleSessions = () => setSessionSelection((previous) => {
+        if (!previous) return null;
+        const next = new Set(previous);
+        for (const { id } of visibleSessions) {
+          if (allVisibleSelected) next.delete(id); else next.add(id);
+        }
+        return next;
+      });
+
+      const runSessionAction = async (action) => {
+        if (sessionActionRef.current) return;
+        sessionActionRef.current = true;
+        setSessionActionBusy(true);
+        try { await action(); }
+        catch (error) { pushToast('error', error?.message || String(error), '会话操作失败'); }
+        finally { sessionActionRef.current = false; setSessionActionBusy(false); }
       };
 
-      const sidebar = h('div', { className: 'tt-side' },
-        h('button', { className: 'tt-new', onClick: newChat, disabled: busy }, '+ 新建对话'),
-        h('div', { className: 'tt-list' },
-          sessions.length === 0
-            ? h('div', { className: 'tt-empty', style: { height: 'auto', padding: '24px 12px' } }, '还没有对话')
-            : sessions.slice(0, 200).map((session) => h('button', {
-              key: session.id,
-              className: 'tt-row' + (session.id === activeId ? ' on' : ''),
-              onClick: () => selectSession(session),
-            },
-              h('b', null, session.title || `${RP_PREFIX}未命名`),
-              h('span', null, session.updatedAt ? new Date(session.updatedAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : ''),
-            )),
+      const archiveSelectedSessions = () => runSessionAction(async () => {
+        const ids = sessionDialog.ids;
+        const completed = [];
+        const failed = [];
+        for (const id of ids) {
+          try {
+            setSessionGroups(await bridge.archiveSession(id));
+            completed.push(id);
+          } catch (error) {
+            const code = error?.rpcError?.code || error?.code;
+            failed.push({ id, message: code === 'workspace/session-active' ? '该会话仍有任务在运行' : error?.message || String(error) });
+          }
+        }
+        setSessionDialog(null);
+        setSessionMenu(null);
+        setSessionSelection((current) => current && (failed.length ? new Set(failed.map(({ id }) => id)) : null));
+        if (completed.length) pushToast('success', `已归档 ${completed.length} 个会话，可从归档记录恢复。`);
+        if (failed.length) pushToast('error', `${failed.length} 个会话归档失败。${failed[0].message}`);
+      });
+
+      const renameSelectedSession = () => runSessionAction(async () => {
+        const { row, title } = sessionDialog;
+        const prefix = row.title.startsWith(RP_PREFIX) ? RP_PREFIX : '';
+        if (!title.trim()) return;
+        const result = await bridge.rename(row.id, prefix + title.trim());
+        setSessions((previous) => previous.map((item) => item.id === row.id ? { ...item, title: result?.title ?? prefix + title.trim() } : item));
+        setSessionDialog(null);
+        setSessionMenu(null);
+        pushToast('success', '会话名称已更新。');
+      });
+
+      const sidebar = h('aside', { className: 'tt-side', 'aria-label': '会话和页面' },
+        h('div', { className: 'tt-side-head' },
+          h('div', { className: 'tt-session-toolbar' },
+            h('div', { className: 'tt-side-label' }, archiveView ? '归档记录' : '会话'),
+            canManageSessions && !archiveView ? h(ToolButton, { icon: 'select', label: sessionSelection ? '退出批量选择' : '批量选择',
+              pressed: Boolean(sessionSelection), disabled: sessionActionBusy, onClick: () => {
+                setSessionSelection(sessionSelection ? null : new Set());
+                setSessionMenu(null);
+              } }) : null,
+            canManageSessions ? h(ToolButton, { icon: 'archive', label: archiveView ? '返回会话列表' : '归档记录', pressed: archiveView,
+              disabled: sessionActionBusy, onClick: () => {
+                setArchiveView(!archiveView);
+                setSessionSelection(null);
+                setSessionMenu(null);
+                setSessionSearch('');
+              } }) : null,
+            h(ToolButton, { icon: 'plus', label: '新建对话', className: 'tt-tool-primary', onClick: newChat, disabled: busy }),
+          ),
+          h('div', { className: 'tt-session-filter' },
+            h('span', { className: 'tt-glyph i-search', 'aria-hidden': true }),
+            h('input', { className: 'tt-search tt-session-search', type: 'search', 'aria-label': '搜索会话',
+              placeholder: archiveView ? '搜索归档…' : '搜索会话…', value: sessionSearch, onChange: (event) => setSessionSearch(event.target.value) }),
+          ),
+          sessionSelection ? h('div', { className: 'tt-selection-bar' },
+            h('span', { role: 'status' }, `已选 ${sessionSelection.size}`),
+            h(ToolButton, { icon: 'all', label: allVisibleSelected ? '取消选择当前结果' : '全选当前结果', pressed: allVisibleSelected,
+              disabled: !visibleSessions.length || sessionActionBusy, onClick: toggleAllVisibleSessions }),
+            h(ToolButton, { icon: 'archive', label: '批量归档', disabled: !sessionSelection.size || sessionActionBusy,
+              onClick: () => setSessionDialog({ ids: [...sessionSelection] }) }),
+          ) : null,
         ),
-        h('div', { className: 'tt-tabs' },
-          [['chat', '对话'], ['cards', '角色'], ['lore', '世界书'], ['presets', '预设'], ['preview', '预览'], ['regex', '正则'], ['extensions', '扩展'], ['settings', '设置']].map(([key, label]) =>
-            h('button', {
-              key, className: 'tt-tab' + (view === key ? ' on' : ''),
-              onClick: () => setView(key),
-            }, label)),
-        ),
+        h('div', { className: 'tt-list' }, visibleSessions.length
+          ? h(SessionList, {
+            rows: visibleSessions, activeId: view === 'chat' ? activeId : null, archived: archiveView,
+            selection: sessionSelection, pinnedIds: sessionGroups.pinned, menu: sessionMenu,
+            disabled: sessionActionBusy, canArchive: canManageSessions, canPin: canManageSessions,
+            onSelect: selectSession, onToggle: toggleSelectedSession, onMenu: (id) => setSessionMenu(sessionMenu === id ? null : id),
+            onRename: (row) => setSessionDialog({ row, title: sessionTitle(row) }),
+            onPin: (row) => runSessionAction(async () => {
+              setSessionGroups(await bridge.pinSession(row.id, !sessionGroups.pinned.includes(row.id)));
+              setSessionMenu(null);
+            }),
+            onArchive: (row) => setSessionDialog({ ids: [row.id], title: sessionTitle(row) }),
+            onRestore: (id) => runSessionAction(async () => {
+              setSessionGroups(await bridge.restoreSession(id));
+              await refreshSessions();
+              pushToast('success', '会话已恢复。');
+            }),
+          }) : h('div', { className: 'tt-empty' }, sessionSearch.trim() ? '没有匹配的会话' : archiveView ? '还没有归档会话' : '还没有对话')),
+        h(PanelNavigation, { view, onNavigate: navigate }),
       );
 
-      const chatPane = view === 'chat'
-        ? h('div', { style: { flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 } },
-          h('div', { className: 'tt-chat', ref: scrollRef },
-            (floors.length === 0 && !greeting)
-              ? h('div', { className: 'tt-empty' },
-                h('div', null, activeCard ? `正在与「${activeCard.name}」对话` : '先在「角色」里选一张卡'),
-                h('div', { className: 'tt-note' }, '开场白只显示不发送；你的第一条消息会连同开场白一起进入模型上下文。'))
-              : renderFloors()),
-          notice ? h('div', { style: { margin: '0 22px 6px', padding: '8px 12px', borderRadius: 8, fontSize: 12, lineHeight: 1.6, background: 'rgba(255,59,48,.10)', color: 'var(--dsw-alias-text-primary, inherit)' } }, notice) : null,
-          activeId && !isRoleplaySession
-            ? h('div', { className: 'tt-note', style: { margin: '0 22px 6px' } }, '这是普通 DSH 会话：只读。点「新建对话」创建角色扮演局后再发送。')
-            : null,
-          h('div', { className: 'tt-comp' },
-            h('div', { className: 'tt-box' },
-              h('textarea', {
-                className: 'tt-ta',
-                ref: chatRef,
-                value: draft,
-                placeholder: isRoleplaySession ? '写点什么…（Enter 发送，Shift+Enter 换行）' : '先新建一局角色扮演对话…',
-                onChange: (e) => setDraft(e.target.value),
-                onKeyDown: (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } },
-              }),
-              h('div', { className: 'tt-bar' },
-                h('button', { className: 'tt-ic', title: '附件（占位）', onClick: () => log('附件上传待接通') }, '📎'),
-                h('button', { className: 'tt-ic', title: '语音输入（占位）', onClick: () => log('语音输入待接通') }, '🎙'),
-                h('div', { className: 'tt-spacer' }),
-                thReady ? h('span', { className: 'tt-note', title: '酒馆助手脚本已运行' }, 'TH ✓') : null,
-                h('button', { className: 'tt-send', disabled: busy || !draft.trim() || !activeId || !isRoleplaySession, onClick: send }, busy ? '生成中…' : '发送'),
-              ),
+      const canSend = Boolean(isRoleplaySession && activeId && bridge?.ok);
+      const liveNode = liveReply ? h('article', { key: liveReply.key, className: 'tt-fl tt-stream' },
+        h('div', { className: 'tt-av', 'aria-hidden': true }, String(activeCard?.name ?? 'AI').slice(0, 1)),
+        h('div', { className: 'tt-msg-content' },
+          h('header', { className: 'tt-meta' },
+            h('b', null, activeCard?.name ?? '角色'),
+            h('span', { className: 'tt-stream-label' }, '生成中'),
+          ),
+          h(AssistantReasoning, { text: liveReply.reasoning, active: !liveReply.text }),
+          h('div', { className: 'tt-bub tt-stream-body' }, ttLib()['message-html'].streamingAssistantProse(liveReply.text)),
+        ),
+      ) : null;
+      const chatPane = view === 'chat' ? h('section', { className: 'tt-chat-pane', 'aria-label': '对话内容' },
+        h('div', { className: 'tt-timeline' },
+          h('div', { className: 'tt-chat', ref: scrollRef, onScroll: trackScroll },
+            h('div', { className: 'tt-thread', ref: threadRef }, !floors.length && !greeting && !liveNode
+              ? h('div', { className: 'tt-chat-empty' },
+                h('div', { className: 'tt-empty-mark', 'aria-hidden': true }, h('span', { className: 'tt-glyph i-chat' })),
+                h('h2', null, canSend ? '开始对话' : activeId ? '这个会话还没有消息' : activeCard ? '与「' + activeCard.name + '」开始对话' : '选择角色，开始对话'),
+                !activeId ? h('button', { className: 'tt-btn tt-primary', onClick: newChat, disabled: busy }, activeCard ? '开始对话' : '浏览角色卡') : null,
+              ) : [...renderedFloors, liveNode],
             ),
-          ))
-        : null;
+          ),
+          scrolledAway ? h(ToolButton, { icon: 'import', label: '回到最新消息', className: 'tt-latest', onClick: scrollToLatest }) : null,
+        ),
+        notice || activeId || draft ? h('div', { className: 'tt-compose-area' },
+          notice ? h('p', { className: 'tt-notice', role: 'status' }, notice) : null,
+          !canSend && activeId ? h('p', { className: 'tt-notice' }, bridge?.ok ? '这是普通 DSH 会话，当前可查看消息。' : '会话通道暂不可用。') : null,
+          canSend || draft ? h(ChatComposer, {
+            inputRef: chatRef, value: draft, sending, enabled: canSend && (!busy || sending),
+            status: sending ? '正在提交消息…' : liveReply ? (liveReply.text ? '正在接收回复…' : '模型正在思考…')
+              : generating ? '等待模型回复…' : 'Enter 发送 · Shift+Enter 换行',
+            onChange: setDraft, onSubmit: send,
+          }) : null,
+        ) : null,
+      ) : null;
 
       const cardsPane = h('div', { className: 'tt-pane' },
         h('h2', { className: 'tt-h' }, '角色卡'),
-        h('p', { className: 'tt-sub' }, '点击开始对话。导入支持 Character Card V2/V3 的 JSON 与 PNG。'),
+        h('p', { className: 'tt-sub' }, '支持导入 Character Card V2/V3 的 PNG 和 JSON。'),
         h('div', { className: 'tt-inline', style: { marginBottom: '14px' } },
-          h('label', { className: 'tt-btn' }, '导入角色卡',
-            h('input', { type: 'file', accept: '.json,.png', multiple: true, style: { display: 'none' }, onChange: importFiles })),
-          h('button', { className: 'tt-btn', onClick: exportActive }, '导出当前'),
+          h(ToolButton, { icon: 'import', label: '导入角色卡', className: 'tt-tool-primary', onClick: () => importCardRef.current?.click() }),
+          h('input', { ref: importCardRef, type: 'file', accept: '.json,.png', multiple: true, hidden: true, onChange: importFiles }),
+          h(ToolButton, { icon: 'export', label: '导出当前角色卡', disabled: !activeCard, onClick: () => exportActive('card') }),
           alternateOpenings.length ? h('button', {
             className: 'tt-btn', disabled: busy,
             onClick: () => setGreetingPick({ card: activeCard, options: alternateOpenings }),
           }, '从备选开场新建') : null,
-          activeCardRaw ? h('span', { className: 'tt-note' },
-            `${assetTavernScripts(activeCardRaw).length} 个脚本 · ${bookEntries(cardBook(activeCardRaw)).length} 条世界书 · ${cardRegexScripts(activeCardRaw).length} 条正则`) : null,
         ),
         h('div', { className: 'tt-grid' },
-          store.cards.map((card) => h('div', {
-            key: card.id,
-            className: 'tt-card' + (card.id === store.activeCardId ? ' on' : ''),
-            onClick: () => { patchStore({ activeCardId: card.id }); ensureCard(card); },
-            onDoubleClick: () => openChat(card),
-          },
-            h('b', null, card.name),
-            h('small', null, `${card.spec || ''} · 世界书 ${card.counts?.lorebookEntries ?? 0} 条 · 脚本 ${card.counts?.thScripts ?? 0}`),
-            h('small', null, card.creator || (card.source === 'seed' ? '内置资产' : '导入')),
-          ))),
-        h('p', { className: 'tt-note', style: { marginTop: '14px' } }, '双击卡片直接开新局；单击切换当前角色。'),
+          store.cards.map((card) => {
+            const selected = card.id === store.activeCardId;
+            return h('article', { key: card.id, className: 'tt-card' + (selected ? ' on' : '') },
+              h('div', { className: 'tt-card-title' },
+                h('div', { className: 'tt-card-mark', 'aria-hidden': true }, card.name.slice(0, 1)),
+                h('div', null, h('b', null, card.name), h('small', null, card.creator || (card.source === 'seed' ? '内置角色卡' : '已导入'))),
+              ),
+              h('div', { className: 'tt-inline' },
+                h('button', { className: 'tt-btn tt-primary', disabled: busy, onClick: () => openChat(card),
+                  'aria-label': `与${card.name}开始对话` }, '开始对话'),
+                selected ? h('span', { className: 'tt-note' }, '当前角色') : h('button', { className: 'tt-btn', onClick: () => {
+                  patchStore({ activeCardId: card.id });
+                  ensureCard(card);
+                } }, '设为当前角色'),
+              ),
+            );
+          })),
+        !store.cards.length ? h('p', { className: 'tt-empty' }, '还没有角色卡。') : null,
       );
 
       // ── 世界书 ────────────────────────────────────────────────
@@ -2025,27 +2184,26 @@ window.__ModuleLoader__.load({
           store.lorebooks.map((book) => h('option', { key: book.id, value: book.id }, book.name)))) : null,
         h('div', { className: 'tt-inline', style: { marginBottom: '10px' } },
           h('select', {
-            className: 'tt-search',
+            className: 'tt-search', 'aria-label': '浏览的世界书',
             value: loreBookId,
             onChange: (e) => { setLoreBookId(e.target.value); setLoreOpen(null); const item = store.lorebooks.find((book) => book.id === e.target.value); if (item) ensureLorebook(item); },
           }, loreOptions.map((option) => h('option', { key: option.id, value: option.id }, option.name))),
-          h('input', { className: 'tt-search', placeholder: '搜索注释 / 关键词 / 内容', value: loreSearch, onChange: (e) => setLoreSearch(e.target.value) }),
+          h('input', { className: 'tt-search', 'aria-label': '搜索世界书', placeholder: '搜索注释、关键词或内容…', value: loreSearch, onChange: (e) => setLoreSearch(e.target.value) }),
           h('span', { className: 'tt-note' }, `${loreEntries.length} 条`),
-          h('label', { className: 'tt-btn' }, '导入世界书',
-            h('input', { type: 'file', accept: '.json', multiple: true, style: { display: 'none' }, onChange: importFiles })),
+          h(ToolButton, { icon: 'import', label: '导入世界书', className: 'tt-tool-primary', onClick: () => importLoreRef.current?.click() }),
+          h('input', { ref: importLoreRef, type: 'file', accept: '.json', multiple: true, hidden: true, onChange: importFiles }),
         ),
         !activeLoreBook
           ? h('div', { className: 'tt-empty', style: { height: 'auto', padding: '40px 0' } }, '这个来源还没有加载；若资产在磁盘上，等会话就绪后会自动读取。')
           : h('div', null, loreEntries.slice(0, 200).map((entry) => h('div', {
             key: entry.uid,
-            className: 'tt-line' + (loreOpen === entry.uid ? ' on' : ''),
-            onClick: () => setLoreOpen(loreOpen === entry.uid ? null : entry.uid),
-            style: { cursor: 'pointer', flexDirection: 'column' },
+            className: 'tt-line tt-lore-entry' + (loreOpen === entry.uid ? ' on' : ''),
           },
-            h('div', { style: { display: 'flex', gap: '8px', width: '100%' } },
-              h('div', { className: 'tt-grow' },
+            h('button', { className: 'tt-disclosure', 'aria-expanded': loreOpen === entry.uid,
+              onClick: () => setLoreOpen(loreOpen === entry.uid ? null : entry.uid) },
+              h('span', { className: 'tt-grow' },
                 h('b', null, entry.comment || `条目 #${entry.uid}`),
-                h('div', { className: 'tt-tagline' },
+                h('span', { className: 'tt-tagline' },
                   entry.keys.length ? `主关键词：${entry.keys.join('、')}` : '无主关键词',
                   entry.secondary.length ? ` · 次关键词：${entry.secondary.join('、')}` : '',
                 ),
@@ -2102,16 +2260,17 @@ window.__ModuleLoader__.load({
         h('h2', { className: 'tt-h' }, '预设'),
         h('p', { className: 'tt-sub' }, '导入 ST 预设 JSON（全量保留字段），查看 prompt 顺序并逐条启停。'),
         h('div', { className: 'tt-inline', style: { marginBottom: '12px' } },
-          h('label', { className: 'tt-btn' }, '导入预设',
-            h('input', { type: 'file', accept: '.json', multiple: true, style: { display: 'none' }, onChange: importFiles })),
-          h('button', { className: 'tt-btn', onClick: exportActive }, '导出当前'),
-          h('input', { className: 'tt-search', placeholder: '筛选 prompt', value: promptSearch, onChange: (e) => setPromptSearch(e.target.value) }),
+          h(ToolButton, { icon: 'import', label: '导入预设', className: 'tt-tool-primary', onClick: () => importPresetRef.current?.click() }),
+          h('input', { ref: importPresetRef, type: 'file', accept: '.json', multiple: true, hidden: true, onChange: importFiles }),
+          h(ToolButton, { icon: 'export', label: '导出当前预设', disabled: !activePreset, onClick: () => exportActive('preset') }),
+          h('input', { className: 'tt-search', 'aria-label': '筛选提示词', placeholder: '筛选提示词…', value: promptSearch, onChange: (e) => setPromptSearch(e.target.value) }),
           activePresetRaw ? h('span', { className: 'tt-note' }, `${presetPrompts(activePresetRaw).length} 条 prompt · ${presetOrderSlots(activePresetRaw).filter((slot) => slot.enabled !== false).length} 项启用`) : null,
         ),
         h('div', { className: 'tt-grid', style: { marginBottom: '14px' } },
-          store.presets.map((preset) => h('div', {
+          store.presets.map((preset) => h('button', {
             key: preset.id,
             className: 'tt-card' + (preset.id === store.activePresetId ? ' on' : ''),
+            'aria-pressed': preset.id === store.activePresetId,
             onClick: () => selectPreset(preset.id),
           },
             h('b', null, preset.name),
@@ -2119,17 +2278,20 @@ window.__ModuleLoader__.load({
             h('small', null, `temperature ${preset.counts?.temperature ?? '-'} · max ${preset.counts?.maxTokens ?? '-'}`),
           ))),
         !activePresetRaw
-          ? h('div', { className: 'tt-empty', style: { height: 'auto', padding: '30px 0' } }, '预设正文读取中…（读取完成后可查看/启停）')
+          ? h('div', { className: 'tt-empty' }, activePreset ? '预设正文尚未就绪。' : '选择或导入一个预设。')
           : h('div', null,
             h('div', { className: 'tt-section' }, 'Prompt 顺序'),
             presetRows.map((row, index) => h('div', { key: row.identifier + index, className: 'tt-line' },
               h('span', { className: 'tt-tag' }, String(index + 1)),
-              h('div', { className: 'tt-grow', style: { cursor: 'pointer' }, onClick: () => setPromptOpen(promptOpen === row.identifier ? null : row.identifier) },
-                h('b', null, row.prompt?.name || row.identifier),
-                h('div', { className: 'tt-tagline' },
-                  row.marker ? 'marker / 位置占位' : `role ${row.prompt?.role || 'system'}`,
-                  row.prompt?.content ? ` · ${row.prompt.content.length} 字` : '',
-                  row.prompt?.injection_position === 1 ? ` · 深度注入 ${row.prompt?.injection_depth ?? 0}` : '',
+              h('div', { className: 'tt-grow' },
+                h('button', { className: 'tt-disclosure', disabled: !row.prompt?.content, 'aria-expanded': promptOpen === row.identifier,
+                  onClick: () => setPromptOpen(promptOpen === row.identifier ? null : row.identifier) },
+                  h('span', { className: 'tt-grow' }, h('b', null, row.prompt?.name || row.identifier),
+                    h('span', { className: 'tt-tagline' },
+                      row.marker ? '位置占位' : `角色 ${row.prompt?.role || 'system'}`,
+                      row.prompt?.content ? ` · ${row.prompt.content.length} 字` : '',
+                      row.prompt?.injection_position === 1 ? ` · 深度注入 ${row.prompt?.injection_depth ?? 0}` : '',
+                    )),
                 ),
                 promptOpen === row.identifier && row.prompt?.content
                   ? h('pre', { className: 'tt-pre' }, String(row.prompt.content).slice(0, 20000))
@@ -2137,6 +2299,7 @@ window.__ModuleLoader__.load({
               ),
               h('button', {
                 className: 'tt-switch' + (row.enabled ? ' on' : ''),
+                role: 'switch', 'aria-checked': row.enabled, 'aria-label': row.prompt?.name || row.identifier,
                 title: row.enabled ? '已启用' : '已停用',
                 onClick: () => togglePrompt(row),
               }),
@@ -2161,9 +2324,9 @@ window.__ModuleLoader__.load({
         h('h2', { className: 'tt-h' }, '扩展'),
         h('p', { className: 'tt-sub' }, '管理当前角色卡和预设的酒馆助手脚本。'),
         h('div', { className: 'tt-inline', style: { marginBottom: '12px' } },
-          h('button', { className: 'tt-btn', onClick: () => setThShow(true) }, '打开脚本界面'),
-          h('button', { className: 'tt-btn', onClick: () => setThReload((tick) => tick + 1) }, '重启宿主'),
-          h('button', { className: 'tt-btn', onClick: () => { updateTh((prev) => ({ ...prev, messages: { ...(prev.messages || {}), [activeId]: {} }, overrides: { ...(prev.overrides || {}), [activeId]: {} } })); } }, '清空本局变量'),
+          h(ToolButton, { icon: 'preview', label: '打开脚本界面', onClick: () => setThShow(true) }),
+          h(ToolButton, { icon: 'refresh', label: '重启宿主', onClick: () => setThReload((tick) => tick + 1) }),
+          h(ToolButton, { icon: 'trash', label: '清空本局变量', disabled: !activeId || !isRoleplaySession, onClick: () => setClearVarsConfirm(activeId) }),
           h('span', { className: 'tt-note' }, thReady ? '宿主运行中' : (configuredScripts.length ? '宿主未启动（检查卡/会话）' : '当前卡和预设没有 TH 脚本')),
         ),
         h('div', { className: 'tt-section' }, `酒馆助手脚本（${enabledScripts.length}/${configuredScripts.length} 启用）`),
@@ -2184,13 +2347,14 @@ window.__ModuleLoader__.load({
             ),
             h('button', {
               className: 'tt-switch' + (scriptEnabled(entry) ? ' on' : ''),
+              role: 'switch', 'aria-checked': scriptEnabled(entry), 'aria-label': script.name || script.id,
               onClick: () => toggleScript(entry),
             }),
           );
         }),
         h('div', { className: 'tt-section' }, '状态变量'),
         h('div', { className: 'tt-inline', style: { marginBottom: '6px' } },
-          h('button', { className: 'tt-btn', onClick: () => setVarOpen(!varOpen) }, varOpen ? '收起' : '展开'),
+          h('button', { className: 'tt-btn', 'aria-expanded': varOpen, onClick: () => setVarOpen(!varOpen) }, varOpen ? '收起' : '展开'),
           h('span', { className: 'tt-note' }, statData ? `${Object.keys(statData).length} 个顶层键` : '还没有 stat_data（等 MVU 初始化）'),
         ),
         varOpen ? h('pre', { className: 'tt-pre' }, JSON.stringify(ttVars, null, 2).slice(0, 40000)) : null,
@@ -2204,11 +2368,12 @@ window.__ModuleLoader__.load({
       // ── 设置 ──────────────────────────────────────────────────
       const settingsPane = h('div', { className: 'tt-pane' },
         h('h2', { className: 'tt-h' }, '设置与诊断'),
-        h('p', { className: 'tt-sub' }, '会话通道、资产读取、TH 宿主与最近错误的连接状态。'),
+        h(ThemePicker, { value: store.theme, onChange: (theme) => patchStore({ theme }) }),
+        h('h3', { className: 'tt-section' }, '诊断'),
         h('div', { className: 'tt-inline', style: { marginBottom: '10px' } },
-          h('button', { className: 'tt-btn', onClick: refreshSessions }, '重新读取会话'),
-          h('button', { className: 'tt-btn', onClick: () => setDiag([]) }, '清空诊断'),
-          h('button', { className: 'tt-btn', onClick: runSelfTest }, '运行自检'),
+          h(ToolButton, { icon: 'refresh', label: '重新读取会话', onClick: refreshSessions }),
+          h(ToolButton, { icon: 'trash', label: '清空诊断', onClick: () => setDiag([]) }),
+          h(ToolButton, { icon: 'check', label: '运行自检', onClick: runSelfTest }),
           selfTest ? h('span', { className: 'tt-note' },
             `${selfTest.at} · ${selfTest.checks.filter((check) => check.ok).length}/${selfTest.checks.length} 通过`) : null,
         ),
@@ -2249,7 +2414,7 @@ window.__ModuleLoader__.load({
         if (previewState.status === 'empty') return h('div', { className: 'tt-note' }, previewState.message);
         if (previewState.status === 'error') {
           return h('div', null,
-            h('div', { className: 'tt-note', style: { color: '#c00', marginBottom: 6 } }, '管线计算失败：'),
+            h('div', { className: 'tt-note', style: { color: 'var(--tt-danger)', marginBottom: 6 } }, '管线计算失败：'),
             h('pre', { className: 'tt-pre', style: { whiteSpace: 'pre-wrap', fontSize: 11.5 } }, previewState.message));
         }
         const { result, card, preset } = previewState;
@@ -2268,6 +2433,7 @@ window.__ModuleLoader__.load({
           h('div', { style: { display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 } },
             h('input', {
               className: 'tt-search',
+              'aria-label': '搜索世界书条目',
               placeholder: '搜索世界书条目…',
               value: previewSearch,
               onChange: (e) => setPreviewSearch(e.target.value),
@@ -2323,7 +2489,7 @@ window.__ModuleLoader__.load({
                 },
               }, result.sectionText))),
           (result.errors.ejs.length || result.errors.regex.length)
-            ? h('div', { className: 'tt-note', style: { marginTop: 8, color: '#c00' } },
+            ? h('div', { className: 'tt-note', style: { marginTop: 8, color: 'var(--tt-danger)' } },
               `错误：EJS ${result.errors.ejs.length} · 正则 ${result.errors.regex.length}` +
               (result.errors.ejs[0] ? ` · ${String(result.errors.ejs[0]).slice(0, 120)}` : ''))
             : null);
@@ -2364,7 +2530,7 @@ window.__ModuleLoader__.load({
         h('p', { className: 'tt-sub' },
           '显示正则在面板渲染时生效。提示词正则处理用户输入和世界书，辅助生成也会处理助手历史。'),
         regexState.status === 'error'
-          ? h('div', { className: 'tt-note', style: { color: '#c00' } }, regexState.message)
+          ? h('div', { className: 'tt-note', style: { color: 'var(--tt-danger)' } }, regexState.message)
           : regexState.status !== 'ok'
             ? h('div', { className: 'tt-note' }, '打开本页即可读取规则…')
             : (() => {
@@ -2418,44 +2584,42 @@ window.__ModuleLoader__.load({
         toast.title ? h('b', null, toast.title) : null,
         toast.message));
 
-      const modalNode = modal ? h('div', { className: 'tt-modal-bg', onClick: (e) => { if (e.target === e.currentTarget) { setModal(null); if (thHostRef.current) thHostRef.current.popupResult(modal.id, POPUP_RESULT.CANCELLED); } } },
-        h('div', { className: 'tt-modal' },
-          h('h3', null, modal.options?.title || '酒馆助手'),
-          h('div', { className: 'tt-modal-body', dangerouslySetInnerHTML: { __html: sanitizeHtml(modal.content || '') } }),
+      const finishPopup = (result) => {
+        setModal(null);
+        thHostRef.current?.popupResult(modal.id, result);
+      };
+      const modalNode = modal ? h(PanelDialog, { key: modal.id, id: 'tt-script-dialog', title: modal.options?.title || '酒馆助手',
+        onDismiss: () => finishPopup(POPUP_RESULT.CANCELLED) },
+        h('div', { className: 'tt-dialog-body' },
+          h('div', { dangerouslySetInnerHTML: { __html: sanitizeHtml(modal.content || '') } }),
           modal.type === POPUP_TYPE.INPUT ? h('input', {
-            autoFocus: true,
+            'data-tt-dialog-focus': '', className: 'tt-search', 'aria-label': '弹窗输入',
             defaultValue: modal.inputValue || '',
             onChange: (e) => { modal.__value = e.target.value; },
-            onKeyDown: (e) => {
-              if (e.key === 'Enter') {
-                const value = e.target.value;
-                setModal(null);
-                if (thHostRef.current) thHostRef.current.popupResult(modal.id, value);
-              }
+            onKeyDown(e) {
+              if (!shouldSubmit(e)) return;
+              e.preventDefault();
+              finishPopup(e.target.value);
             },
           }) : null,
-          h('div', { className: 'tt-inline', style: { justifyContent: 'flex-end' } },
-            h('button', { className: 'tt-btn', onClick: () => { setModal(null); if (thHostRef.current) thHostRef.current.popupResult(modal.id, POPUP_RESULT.CANCELLED); } }, '取消'),
-            h('button', {
-              className: 'tt-btn',
-              onClick: () => {
-                let result = POPUP_RESULT.AFFIRMATIVE;
-                if (modal.type === POPUP_TYPE.INPUT) result = modal.__value ?? modal.inputValue ?? '';
-                setModal(null);
-                if (thHostRef.current) thHostRef.current.popupResult(modal.id, result);
-              },
-            }, '确定'),
+          h('div', { className: 'tt-dialog-actions' },
+            h('button', { className: 'tt-btn', onClick: () => finishPopup(POPUP_RESULT.CANCELLED) }, '取消'),
+            h('button', { className: 'tt-btn tt-primary', onClick: () => finishPopup(
+              modal.type === POPUP_TYPE.INPUT ? (modal.__value ?? modal.inputValue ?? '') : POPUP_RESULT.AFFIRMATIVE,
+            ) }, '确定'),
           ),
         ),
       ) : null;
 
-      return h('div', { className: 'tt-root', style: { minHeight: 0 } },
-        h('style', { dangerouslySetInnerHTML: { __html: CSS } }),
-        h('div', { className: 'tt-top' },
-          h('div', { className: 'tt-brand' }, '角色扮演'),
-          h('div', { className: 'tt-spacer' }),
-          h('div', { className: 'tt-chip', title: '当前角色' },
-            h('span', null, '🎭'),
+      const header = h('header', { className: 'tt-top' },
+        h('div', { className: 'tt-heading' },
+          compact ? h(ToolButton, { icon: 'menu', label: '会话与页面', expanded: drawerOpen,
+            onClick: () => setDrawerOpen(true) }) : null,
+          h('h1', { className: 'tt-brand' }, view === 'chat' ? '对话' : '角色扮演'),
+        ),
+        h('div', { className: 'tt-context', 'aria-label': '角色、预设和模型' },
+          h('label', { className: 'tt-chip' },
+            h('span', null, '角色'),
             h('select', {
               value: store.activeCardId || '',
               onChange: (e) => {
@@ -2463,20 +2627,20 @@ window.__ModuleLoader__.load({
                 const card = store.cards.find((item) => item.id === e.target.value);
                 if (card) ensureCard(card);
               },
-            }, store.cards.map((card) => h('option', { key: card.id, value: card.id }, card.name))),
+            }, h('option', { value: '', disabled: true }, '未选择'), store.cards.map((card) => h('option', { key: card.id, value: card.id }, card.name))),
           ),
-          h('div', { className: 'tt-chip', title: '当前预设' },
-            h('span', null, '📋'),
+          h('label', { className: 'tt-chip' },
+            h('span', null, '预设'),
             h('select', {
               value: store.activePresetId || '',
               onChange: (e) => selectPreset(e.target.value || null),
-            }, h('option', { value: '', disabled: true }, '未选择预设'),
+            }, h('option', { value: '', disabled: true }, '未选择'),
             store.presets.map((preset) => h('option', { key: preset.id, value: preset.id }, preset.name))),
           ),
-          h('div', { className: 'tt-chip', title: '模型' },
-            h('span', null, '⚙️'),
+          h('label', { className: 'tt-chip' },
+            h('span', null, '模型'),
             h('select', {
-              defaultValue: '',
+              key: activeId, defaultValue: '', disabled: !activeId || !bridge?.ok || !models.length,
               onChange: async (e) => {
                 const raw = e.target.value;
                 if (!raw || !activeId) { log('先选一局再切模型'); return; }
@@ -2487,7 +2651,7 @@ window.__ModuleLoader__.load({
                 log(done ? `模型已切到 ${raw}` : `模型切换失败：${raw}`);
               },
             },
-            h('option', { value: '' }, models.length ? '跟随会话' : '默认模型'),
+            h('option', { value: '', disabled: true }, models.length ? '跟随会话' : '默认模型'),
             models.map((model) => {
               const value = model && model.provider ? model.provider + '/' + model.model : String(model);
               const label = (model && (model.label || model.model)) || value;
@@ -2495,38 +2659,68 @@ window.__ModuleLoader__.load({
             })),
           ),
         ),
-        h('div', { className: 'tt-body' }, sidebar, h('div', { className: 'tt-main' }, pane)),
+      );
+
+      return h('div', { className: 'tt-root' + (compact ? ' compact' : ''), 'data-tt-theme': store.theme, ref: rootRef },
+        h('style', null, CSS),
+        compact ? null : sidebar,
+        h('main', { className: 'tt-main' }, header, pane),
+        compact && drawerOpen ? h(PanelDialog, { id: 'tt-navigation', title: archiveView ? '归档记录' : '会话与页面', drawer: true,
+          onDismiss: () => setDrawerOpen(false) }, sidebar) : null,
         h('div', { className: 'tt-thframe' + (thShow ? ' on' : '') },
           h('div', { className: 'tt-thbar' },
             h('span', null, '酒馆助手脚本界面'),
             h('span', { className: 'tt-badge' }, thReady ? '运行中' : '未就绪'),
             h('div', { className: 'tt-spacer' }),
-            h('button', { className: 'tt-btn', onClick: () => setThShow(false) }, '关闭界面'),
+            h(ToolButton, { icon: 'close', label: '关闭脚本界面', onClick: () => setThShow(false) }),
           ),
           h('div', { className: 'tt-thbox', ref: thFrameRef }),
         ),
-        h('div', { className: 'tt-toasts' }, toastNodes),
-        greetingPick ? h('div', {
-          className: 'tt-modal-bg',
-          onClick: (e) => { if (e.target === e.currentTarget) setGreetingPick(null); },
-        },
-          h('div', { className: 'tt-modal', role: 'dialog', 'aria-modal': true, 'aria-labelledby': 'tt-greeting-title' },
-            h('h3', { id: 'tt-greeting-title' }, `选择开场白 · ${greetingPick.card.name}`),
-            h('div', { className: 'tt-modal-body' },
-              greetingPick.options.map((option) => h('button', {
+        h('div', { className: 'tt-toasts', role: 'status' }, toastNodes),
+        greetingPick ? h(PanelDialog, { id: 'tt-greeting', title: `选择开场白 · ${greetingPick.card.name}`,
+          onDismiss: () => setGreetingPick(null) },
+            greetingPick.options.map((option) => h('button', {
                 key: option.id,
                 className: 'tt-greet',
                 onClick: () => chooseOpening(greetingPick, option),
               },
                 h('b', null, option.label),
-                h('div', { className: 'tt-greet-text' },
-                  option.text.length > 180 ? option.text.slice(0, 180) + '…' : option.text),
+                h('div', { className: 'tt-greet-text' }, openingPreview(option.text)),
               )),
-            ),
-            h('div', { style: { display: 'flex', gap: 8, justifyContent: 'flex-end' } },
+            h('div', { className: 'tt-dialog-actions' },
               h('button', { className: 'tt-btn', onClick: () => setGreetingPick(null) }, '取消')),
-          )) : null,
+          ) : null,
         modalNode,
+        sessionDialog ? h(PanelDialog, { id: 'tt-session-dialog', title: sessionDialog.ids ? '归档会话' : '重命名会话',
+          onDismiss: () => { if (!sessionActionRef.current) setSessionDialog(null); } },
+          sessionDialog.ids
+            ? h('p', { className: 'tt-dialog-body' }, sessionDialog.title
+              ? `将「${sessionDialog.title}」移出列表。你可以从归档记录恢复。`
+              : `将 ${sessionDialog.ids.length} 个会话移出列表。你可以从归档记录恢复。`)
+            : h('input', { className: 'tt-search tt-session-search', 'data-tt-dialog-focus': '', 'aria-label': '会话名称',
+              value: sessionDialog.title, disabled: sessionActionBusy, onChange: (event) => setSessionDialog({ ...sessionDialog, title: event.target.value }),
+              onKeyDown: (event) => { if (shouldSubmit(event)) { event.preventDefault(); renameSelectedSession(); } },
+            }),
+          h('div', { className: 'tt-dialog-actions' },
+            h('button', { className: 'tt-btn', disabled: sessionActionBusy, onClick: () => setSessionDialog(null) }, '取消'),
+            h('button', { className: 'tt-btn tt-primary', disabled: sessionActionBusy || (!sessionDialog.ids && !sessionDialog.title.trim()),
+              onClick: sessionDialog.ids ? archiveSelectedSessions : renameSelectedSession,
+            }, sessionActionBusy ? '处理中…' : sessionDialog.ids ? '确认归档' : '保存名称'),
+          ),
+        ) : null,
+        clearVarsConfirm ? h(PanelDialog, { id: 'tt-clear-vars', title: '清空本局变量', onDismiss: () => setClearVarsConfirm(null) },
+          h('div', null, '本局的消息变量和脚本对楼层的改写将被清空。'),
+          h('div', { className: 'tt-dialog-actions' },
+            h('button', { className: 'tt-btn', onClick: () => setClearVarsConfirm(null) }, '取消'),
+            h('button', { className: 'tt-btn', onClick: () => {
+              setClearVarsConfirm(null);
+              if (activeIdRef.current !== clearVarsConfirm) return;
+              updateTh((prev) => ({ ...prev,
+                messages: { ...prev.messages, [clearVarsConfirm]: {} }, overrides: { ...prev.overrides, [clearVarsConfirm]: {} },
+              }));
+            } }, '确认清空'),
+          ),
+        ) : null,
       );
     }
 
@@ -2604,7 +2798,7 @@ window.__ModuleLoader__.load({
     }
 
     return {
-      inject: ['slots', 'remote', 'remote.session', 'remote.workspaceFiles'],
+      inject: ['slots', 'remote', 'remote.session', 'remote.workspaceFiles', 'workspaces', 'sessions'],
       apply(ctx) {
         try {
           ctx.slots.inject('main', () => ctx.slots.register(

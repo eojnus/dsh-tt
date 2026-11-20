@@ -1,6 +1,9 @@
 mod display;
 mod generation;
+mod lorebook;
+mod message;
 mod png;
+mod prompt;
 
 use serde_json::Value;
 
@@ -32,6 +35,106 @@ fn json_output(value: &Value) -> u64 {
     let len = bytes.len() as u64;
     let ptr = Box::into_raw(bytes.into_boxed_slice()) as *mut u8;
     (len << 32) | ptr as u64
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn layout_message_fences(ptr: *const u8, len: usize) -> u64 {
+    let bytes = unsafe { std::slice::from_raw_parts(ptr, len) };
+    let Ok(source) = serde_json::from_slice::<String>(bytes) else {
+        return 0;
+    };
+    message::fence_layout(&source)
+        .as_ref()
+        .map_or(0, json_output)
+}
+
+#[cfg(target_arch = "wasm32")]
+#[link(wasm_import_module = "dsh_tt")]
+unsafe extern "C" {
+    fn start_lorebook_round(ptr: *const u8, len: usize);
+    fn match_lorebook_entry(index: usize) -> i32;
+    fn lorebook_random() -> f64;
+    fn sort_legacy_lorebook_entries(ptr: *mut u32, len: usize, grouped: u32);
+}
+
+#[cfg(target_arch = "wasm32")]
+struct HostMatcher;
+
+#[cfg(target_arch = "wasm32")]
+impl lorebook::Matcher for HostMatcher {
+    fn start_round(&mut self, recursive_text: &str) {
+        unsafe { start_lorebook_round(recursive_text.as_ptr(), recursive_text.len()) };
+    }
+
+    fn match_entry(&mut self, index: usize) -> i32 {
+        unsafe { match_lorebook_entry(index) }
+    }
+
+    fn random(&mut self) -> f64 {
+        unsafe { lorebook_random() }
+    }
+
+    fn legacy_sort(&mut self, candidates: &mut [u32], grouped: bool) {
+        unsafe {
+            sort_legacy_lorebook_entries(
+                candidates.as_mut_ptr(),
+                candidates.len(),
+                u32::from(grouped),
+            )
+        };
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn activate_lorebook(ptr: *const u8, len: usize) -> u64 {
+    let bytes = unsafe { std::slice::from_raw_parts(ptr, len) };
+    let Ok(input) = serde_json::from_slice(bytes) else {
+        return 0;
+    };
+    lorebook::activate(&input, &mut HostMatcher)
+        .as_ref()
+        .map_or(0, json_output)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn layout_lorebook_buckets(ptr: *const u8, len: usize) -> u64 {
+    let bytes = unsafe { std::slice::from_raw_parts(ptr, len) };
+    let Ok(input) = serde_json::from_slice(bytes) else {
+        return 0;
+    };
+    lorebook::bucket_layout(&input)
+        .as_ref()
+        .map_or(0, json_output)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn build_lorebook_scan_windows(ptr: *const u8, len: usize) -> u64 {
+    let bytes = unsafe { std::slice::from_raw_parts(ptr, len) };
+    let Ok(input) = serde_json::from_slice(bytes) else {
+        return 0;
+    };
+    lorebook::scan_windows(&input)
+        .as_ref()
+        .map_or(0, json_output)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn plan_main_prompt(ptr: *const u8, len: usize) -> u64 {
+    let bytes = unsafe { std::slice::from_raw_parts(ptr, len) };
+    let Ok(input) = serde_json::from_slice(bytes) else {
+        return 0;
+    };
+    prompt::plan(&input).as_ref().map_or(0, json_output)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn order_prompt_depth(ptr: *const u8, len: usize) -> u64 {
+    let bytes = unsafe { std::slice::from_raw_parts(ptr, len) };
+    let Ok(depths) = serde_json::from_slice::<Vec<f64>>(bytes) else {
+        return 0;
+    };
+    json_output(&serde_json::json!(prompt::depth_order(&depths)))
 }
 
 #[unsafe(no_mangle)]
@@ -112,5 +215,7 @@ pub unsafe extern "C" fn partition_prompt_injections(ptr: *const u8, len: usize)
     let Ok(input) = serde_json::from_slice(bytes) else {
         return 0;
     };
-    generation::partition_injections(&input).as_ref().map_or(0, json_output)
+    generation::partition_injections(&input)
+        .as_ref()
+        .map_or(0, json_output)
 }

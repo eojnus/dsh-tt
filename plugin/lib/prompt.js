@@ -4,6 +4,7 @@
 import { substitute } from './macros.js';
 import { renderEjs } from './ejs.js';
 import { joinDecorated } from './decorators.js';
+import { cardAssetsWasm } from './card-assets-wasm.js';
 
 /** ST 的内置 marker（位置占位符，不产出文本）。 */
 export const MARKERS = new Set([
@@ -66,32 +67,44 @@ function promptByIdentifier(preset, identifier) {
   return preset?.prompts.find((p) => p.identifier === identifier);
 }
 
-function markerContent(marker, { card, lorebook, env, persona, preset, decorate }) {
+const BUILTINS = ['worldInfoBefore', 'main', 'worldInfoAfter', 'charDescription', 'charPersonality',
+  'scenario', 'personaDescription', 'nsfw', 'jailbreak'];
+
+function planWithRust(preset, wasm) {
+  if (!wasm?.planMainPrompt) return null;
+  const prompts = preset?.prompts ?? [];
+  const order = Array.isArray(preset?.order) ? preset.order : [];
+  const ordinary = (value) => value == null || ['number', 'string', 'boolean'].includes(typeof value);
+  if (!Array.isArray(prompts) || prompts.some((prompt) => typeof prompt?.identifier !== 'string'
+    || !ordinary(prompt.injection_position)) || order.some((slot) => typeof slot?.identifier !== 'string')) return null;
+  return wasm.planMainPrompt({
+    prompts: prompts.map((prompt) => [prompt.identifier, prompt.enabled !== false, Boolean(prompt.content), Number(prompt.injection_position) === 1]),
+    order: order.map((slot) => [slot.identifier, slot.enabled !== false]),
+  });
+}
+
+function markerEnabled(marker, preset) {
+  if (marker === 'personaDescription') return true;
+  if (marker === 'nsfw' || marker === 'jailbreak') {
+    const prompt = promptByIdentifier(preset, marker);
+    return Boolean(prompt && prompt.enabled !== false);
+  }
+  const slot = Array.isArray(preset?.order) ? preset.order.find((entry) => entry.identifier === marker) : null;
+  return slot?.enabled !== false && promptByIdentifier(preset, marker)?.enabled !== false;
+}
+
+function markerContent(marker, { card, lorebook, persona, preset, decorate }) {
   const join = (list) => (decorate ? decorate(list) : (list?.length ? list.join('\n') : ''));
-  const enabled = (identifier) => {
-    const slot = Array.isArray(preset?.order) ? preset.order.find((entry) => entry.identifier === identifier) : null;
-    if (slot && slot.enabled === false) return false;
-    const prompt = preset?.prompts.find((entry) => entry.identifier === identifier);
-    return !prompt || prompt.enabled !== false;
-  };
   switch (marker) {
-    case 'worldInfoBefore': return enabled('worldInfoBefore') ? join(lorebook?.buckets?.before) : '';
-    case 'worldInfoAfter': return enabled('worldInfoAfter') ? join(lorebook?.buckets?.after) : '';
-    case 'charDescription': return enabled('charDescription') ? (card?.description ?? '') : '';
-    case 'charPersonality': return enabled('charPersonality') ? (card?.personality ?? '') : '';
-    case 'scenario': return enabled('scenario') ? (card?.scenario ?? '') : '';
+    case 'worldInfoBefore': return join(lorebook?.buckets?.before);
+    case 'worldInfoAfter': return join(lorebook?.buckets?.after);
+    case 'charDescription': return card?.description ?? '';
+    case 'charPersonality': return card?.personality ?? '';
+    case 'scenario': return card?.scenario ?? '';
     case 'personaDescription': return persona?.description ?? '';
-    case 'main': {
-      if (!enabled('main')) return '';
-      const main = preset?.prompts.find((p) => p.identifier === 'main');
-      return main ? (main.content ?? '') : '';
-    }
-    case 'enhanceDefinitions': return '';
+    case 'main':
     case 'nsfw':
-    case 'jailbreak': {
-      const p = promptByIdentifier(preset, marker);
-      return p && p.enabled !== false ? (p.content ?? '') : '';
-    }
+    case 'jailbreak': return promptByIdentifier(preset, marker)?.content ?? '';
     default: return '';
   }
 }
@@ -110,7 +123,7 @@ function markerContent(marker, { card, lorebook, env, persona, preset, decorate 
  *   trace: { parts: {label:string, chars:number, rendered:number}[], depth: number, injected: number, preset: string|null }
  * }}
  */
-export function renderPrompt({ card, preset, lorebook, persona, env, macroOptions, ejsScope = {} }) {
+export function renderPrompt({ card, preset, lorebook, persona, env, macroOptions, ejsScope = {}, wasm = cardAssetsWasm() }) {
   const parts = [];
   const injectedRaw = [];
   const trace = { parts: [], depth: 0, injected: 0, preset: preset?.name ?? null };
@@ -126,11 +139,11 @@ export function renderPrompt({ card, preset, lorebook, persona, env, macroOption
     trace.parts.push({ label: label || 'part', chars: raw.length, rendered: 0 });
   };
 
-  const consumePrompt = (prompt) => {
+  const consumePrompt = (prompt, absolute) => {
     if (!prompt || prompt.enabled === false) return;
     const content = prompt.content;
     if (!content) return;
-    const isAbsolute = Number(prompt.injection_position) === 1;
+    const isAbsolute = absolute ?? Number(prompt.injection_position) === 1;
     if (isAbsolute) {
       const depth = Number(prompt.injection_depth) || 0;
       injectedRaw.push({ role: prompt.role || 'system', content, depth, label: prompt.name || prompt.identifier || 'inject' });
@@ -139,17 +152,18 @@ export function renderPrompt({ card, preset, lorebook, persona, env, macroOption
     push(content, prompt.name || prompt.identifier || 'prompt');
   };
 
-  const hasOrder = Array.isArray(preset?.order) && preset.order.length > 0;
-
   // ST 的固定内置段（§14.3）：无论 prompt_order 是否列出，都按这个顺序在前。
   // prompt_order 只决定"用户 prompt"部分的顺序。
-  const builtins = ['worldInfoBefore', 'main', 'worldInfoAfter', 'charDescription', 'charPersonality', 'scenario', 'personaDescription', 'nsfw', 'jailbreak'];
+  const plan = planWithRust(preset, wasm);
   const decorate = (list) => joinDecorated(list, ejsScope, '\n');
-  for (const marker of builtins) {
-    push(markerContent(marker, { card, lorebook, env, persona, preset, decorate }), `marker:${marker}`);
+  for (const marker of plan?.markers ?? BUILTINS) {
+    if (!plan && !markerEnabled(marker, preset)) continue;
+    push(markerContent(marker, { card, lorebook, persona, preset, decorate }), `marker:${marker}`);
   }
 
-  if (hasOrder) {
+  if (plan) {
+    for (const [index, absolute] of plan.ordered) consumePrompt(preset.prompts[index], absolute);
+  } else if (Array.isArray(preset?.order)) {
     for (const slot of preset.order) {
       if (!slot || slot.enabled === false) continue;
       const identifier = slot.identifier;

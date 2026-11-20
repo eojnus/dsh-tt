@@ -4,23 +4,29 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import { stripTypeScriptTypes } from 'node:module';
 import { loadBundledLib } from '../tools/bundle-lib.mjs';
-import { buildMessageFrame, literalAssetDisplays, splitMessageBlocks, vendorScript } from '../plugin/lib/message-html.js';
+import { assistantProse, buildMessageFrame, fenceDisplayFragment, hideAssistantControlBlocks, literalAssetDisplays, splitMessageBlocks, streamingAssistantProse, vendorScript } from '../plugin/lib/message-html.js';
 
 async function runHostedScripts(scripts, init = {}, options = {}) {
   const read = (file) => fs.readFileSync(new URL(`../src/tavern/${file}`, import.meta.url), 'utf8');
   let notifyReady;
   const ready = new Promise((resolve) => { notifyReady = resolve; });
   const elements = [];
+  const modules = [];
   const preloads = [];
   const logs = [];
   const listeners = new Map();
   function jQuery(callback) { return jQuery.fn.ready(callback); }
   jQuery.fn = { ready(callback) { queueMicrotask(callback); } };
   const context = vm.createContext({
-    structuredClone, DOMException, setTimeout: options.setTimeout ?? setTimeout, clearTimeout, jQuery,
+    structuredClone, DOMException, URL, setTimeout: options.setTimeout ?? setTimeout, clearTimeout, jQuery,
     addEventListener(type, listener) { listeners.set(type, listener); },
     __TT_INIT__: { ...init, scripts },
     __TT_REGEX__: (await loadBundledLib()).regex,
+    async __TT_IMPORT_MODULE__(url) {
+      const exports = await (options.loadModule ? options.loadModule(url, context) : import(url));
+      modules.push(exports);
+      return exports;
+    },
     parent: {
       postMessage(data) {
         if (data.tt === 'ready') notifyReady(data);
@@ -29,6 +35,7 @@ async function runHostedScripts(scripts, init = {}, options = {}) {
       },
     },
     document: {
+      baseURI: 'https://host.example/roleplay/index.html',
       createElement(tag) {
         return { tag, style: {}, setAttribute(name, value) { this[name] = value; }, appendChild() {} };
       },
@@ -37,19 +44,7 @@ async function runHostedScripts(scripts, init = {}, options = {}) {
         appendChild(element) {
           if (element.tag !== 'script') return;
           elements.push(element);
-          if (element.type === 'module') {
-            if (options.loadModule) {
-              options.loadModule(element, context);
-              return;
-            }
-            const source = Buffer.from(element.textContent).toString('base64');
-            import('data:text/javascript;base64,' + source).then((exports) => {
-              element.moduleExports = exports;
-              element.onload();
-            }, () => element.onerror());
-          } else {
-            vm.runInContext(element.textContent, context);
-          }
+          vm.runInContext(element.textContent, context);
         },
       },
     },
@@ -59,7 +54,7 @@ async function runHostedScripts(scripts, init = {}, options = {}) {
   vm.runInContext(read('vendor/acorn.js'), context);
   vm.runInContext(read('shim.js').replace('/* __DSH_GENERATION_SHIM__ */',
     () => stripTypeScriptTypes(read('generation.ts'))), context);
-  return { context, elements, preloads, logs, ready: await ready };
+  return { context, elements, modules, preloads, logs, ready: await ready };
 }
 
 test('酒馆助手：MVU 能遍历世界书绑定、异步读取 InitVar 并写入首楼', async () => {
@@ -220,7 +215,7 @@ test('酒馆助手：静态远程依赖在脚本执行前并发提交，重复�
   ], {}, {
     setTimeout: (callback, delay) => setTimeout(callback, delay === 60000 ? 1000 : 0),
     onPreload(link) { timeline.push(link.href); },
-    loadModule(element) { timeline.push(element['data-tt-script']); element.onload(); },
+    loadModule(url) { timeline.push(decodeURIComponent(url).includes(extra) ? 'second' : 'first'); },
   });
   assert.equal(ready.errors, 0);
   assert.deepEqual(timeline, [shared, extra, 'first', 'second']);
@@ -233,14 +228,13 @@ test('酒馆助手：模块完成导入后，就绪回调可以等待后续脚�
   ];
   const { context, logs, ready } = await runHostedScripts(scripts, {}, {
     setTimeout: (callback, delay) => setTimeout(callback, delay === 60000 ? 1000 : 0),
-    loadModule(element, context) {
+    loadModule(_url, context) {
       vm.runInContext(`$(async () => {
         window.startingScript = getScriptId();
         await new Promise(resolve => eventOnce('preset-loaded', resolve));
         await new Promise(resolve => eventOnce(tavern_events.APP_READY, resolve));
         window.mvuInitialized = true;
       });`, context);
-      element.onload();
     },
   });
   assert.equal(ready.errors, 0);
@@ -257,7 +251,7 @@ test('酒馆助手：模块超时报告入口地址，后续脚本仍执行', as
   ];
   const { context, logs, ready } = await runHostedScripts(scripts, {}, {
     setTimeout: (callback) => setTimeout(callback, 0),
-    loadModule() {},
+    loadModule: () => new Promise(() => {}),
   });
   assert.equal(ready.errors, 1);
   assert.equal(context.presetLoaded, true);
@@ -273,16 +267,33 @@ test('酒馆助手：按完整语法识别模块，单个无效脚本不影响�
     { id: 'invalid', content: `if (true) { import "${imported}"; }` },
     { id: 'classic', content: '/* import and export */ window.classic = (this === window); var laterLoad = () => import("unused");' },
   ];
-  const { context, elements, logs, ready } = await runHostedScripts(scripts);
+  const { context, elements, modules, logs, ready } = await runHostedScripts(scripts);
   assert.equal(ready.errors, 1);
   assert.equal(ready.module, true);
-  assert.deepEqual(elements.map((element) => [element['data-tt-script'], element.type]), [
-    ['after-directive', 'module'], ['compact', 'module'], ['top-level-await', 'module'], ['classic', undefined],
-  ]);
-  assert.deepEqual(elements.slice(0, 3).map((element) => element.moduleExports.result), [10, 12, 13]);
+  assert.deepEqual(elements.map((element) => element['data-tt-script']), ['classic']);
+  assert.deepEqual(modules.map((exports) => exports.result), [10, 12, 13]);
   assert.equal(context.classic, true);
   assert.equal(logs.filter((log) => log.level === 'error').length, 1);
   assert.match(logs.find((log) => log.level === 'error').text, /invalid.*top level/);
+});
+
+test('酒馆助手：保留文档相对导入，模块执行抛错后继续下一脚本', async () => {
+  const { ready, context, logs } = await runHostedScripts([
+    { id: 'relative', content: 'export { version } from "./shared.js";' },
+    { id: 'failing', content: 'await Promise.resolve(); throw new Error("初始化错误");' },
+    { id: 'classic', content: 'window.reached = true;' },
+  ], {}, {
+    loadModule(url) {
+      if (decodeURIComponent(url).includes('shared.js')) {
+        assert.match(decodeURIComponent(url), /https:\/\/host\.example\/roleplay\/shared\.js/);
+        return { version: 1 };
+      }
+      return import(url);
+    },
+  });
+  assert.equal(context.reached, true);
+  assert.equal(ready.errors, 1);
+  assert.match(logs.find((log) => log.level === 'error').text, /failing.*初始化错误/);
 });
 
 test('酒馆助手：脚本目录按顺序展开，并继承目录的启停状态', async () => {
@@ -318,6 +329,20 @@ test('酒馆楼层：完整 HTML 围栏可以跨空行，非 HTML 和未闭合�
   assert.deepEqual(blocks.map(({ type }) => type), ['text', 'html', 'code', 'code']);
   assert.equal(blocks[1].text, html);
   assert.equal(splitMessageBlocks(html)[0].type, 'html');
+});
+
+test('酒馆楼层：显示预设状态栏与正文，隐藏推理和带代码围栏的变量更新', () => {
+  const source = '<think>推理</think><dream_plot>\n<scene>日期|时刻|地点</scene>\n\n可见正文\n'
+    + '<UpdateVariable>\n```json\n[{ "op": "replace" }]\n```\n</UpdateVariable></dream_plot>';
+  const decorated = hideAssistantControlBlocks(source).replace(/<scene>([^|]+)\|([^|]+)\|([^<]+)<\/scene>/,
+    fenceDisplayFragment('<div class="scene"><span>$1</span><span>$2</span><span>$3</span></div>'));
+  const blocks = splitMessageBlocks(decorated);
+  assert.equal(blocks.find((block) => block.type === 'html').text, '<div class="scene"><span>日期</span><span>时刻</span><span>地点</span></div>');
+  assert.equal(blocks.filter((block) => block.type === 'text').map((block) => assistantProse(block.text)).join('').trim(), '可见正文');
+  assert.equal(blocks.some((block) => block.type === 'code'), false);
+  assert.equal(streamingAssistantProse('正文\n```html\n<style>color:blue'), '正文');
+  assert.equal(streamingAssistantProse('<dream_scene/>正文<StatusPlaceHolderImpl/>'), '正文');
+  assert.equal(streamingAssistantProse('<dream_plot>正文<JSONPatch>局部变量'), '正文');
 });
 
 test('酒馆楼层：只有卡片模板能获得楼层数据，普通输出使用受限的 iframe 文档', () => {

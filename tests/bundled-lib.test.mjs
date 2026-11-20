@@ -23,7 +23,7 @@ test('同构包：模块齐全，且不含 node: 依赖', () => {
   assert.equal(/^\s*export\s/m.test(source), false);
 });
 
-test('聊天楼层与世界书历史排除系统事件和用户消息的内部绑定数据', () => {
+test('聊天楼层与世界书历史排除系统事件、原生推理和内部绑定数据', () => {
   const { packChatInput, toChatFloors } = bundled['chat-wire'];
   const input = packChatInput('玩家正文', { presetJson: { name: '内部预设' }, worldInfoHistory: ['内部历史'] });
   const floors = toChatFloors([
@@ -31,10 +31,15 @@ test('聊天楼层与世界书历史排除系统事件和用户消息的内部�
     { type: 'user/message', seq: 1, data: { content: [{ text: input.slice(0, 10) }, { text: input.slice(10) }] } },
     { type: 'user/message', seq: 2, data: { content: '\u0000TT\u0000未完成的内部数据' } },
     { type: 'assistant/message', seq: 3, data: { message: { content: '正常回复' } } },
+    { type: 'assistant/message', seq: 4, data: { message: { content: [
+      { type: 'reasoning', text: '原生推理' }, { type: 'text', text: '正文' },
+      { type: 'tool-call', text: '内部调用' }, { type: 'text', text: '<UpdateVariable>脚本数据</UpdateVariable>' },
+    ] } } },
   ]);
   assert.deepEqual(floors.map(({ role, text }) => [role, text]), [
     ['user', '玩家正文'],
     ['assistant', '正常回复'],
+    ['assistant', '正文<UpdateVariable>脚本数据</UpdateVariable>'],
   ]);
 });
 

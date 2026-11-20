@@ -32,7 +32,8 @@ const bytes = fs.readFileSync(wasmPath);
 const module = new WebAssembly.Module(bytes);
 const exports = new Set(WebAssembly.Module.exports(module).map(({ name }) => name));
 for (const name of ['memory', 'alloc', 'dealloc', 'normalize_card_text', 'scan_png', 'match_lorebook_keywords',
-  'assemble_generation', 'encode_display_capture', 'partition_prompt_injections']) {
+  'assemble_generation', 'encode_display_capture', 'partition_prompt_injections', 'activate_lorebook',
+  'layout_lorebook_buckets', 'build_lorebook_scan_windows', 'plan_main_prompt', 'order_prompt_depth', 'layout_message_fences']) {
   if (!exports.has(name)) throw new Error(`角色卡 WASM 缺少接口 ${name}`);
 }
 fs.writeFileSync(output,

@@ -1,11 +1,57 @@
+import { cardAssetsWasm } from './card-assets-wasm.js';
+
 const BODY = /<body(?:\s[^>]*)?>[\s\S]*<\/body\s*>/i;
 const HTML_START = /^\s*(?:<!doctype\s+html\b|<[a-z][\w:-]*(?:\s|\/?>))/i;
+const ASSISTANT_CONTROL = 'think|thinking|analysis|reasoning|dream_think|dream_after_thinking|simple_thinking|UpdateVariable|JSONPatch|status_current_variable';
+const CLOSED_CONTROL_BLOCK = new RegExp(`<(${ASSISTANT_CONTROL})\\b[^>]*>[\\s\\S]*?<\\/\\1\\s*>`, 'gi');
+const STREAMING_CONTROL_BLOCK = new RegExp(`<(${ASSISTANT_CONTROL}|dream_scene|SceneInfo|dream_option|rpg_check|dream_rpg|script|style|template)\\b[^>]*(?<!/)>[\\s\\S]*?(?:<\\/\\1\\s*>|$)`, 'gi');
 
-export function splitMessageBlocks(text) {
+export function hideAssistantControlBlocks(text) {
+  return text.replace(CLOSED_CONTROL_BLOCK, '');
+}
+
+export function assistantProse(text) {
+  return text.replace(/<\/?(?:dream_plot|dream_body|dream_after_format)\b[^>]*>/gi, '');
+}
+
+export function streamingAssistantProse(text) {
+  // Display dialogue as it arrives without flashing an unfinished control block.
+  return text
+    .replace(STREAMING_CONTROL_BLOCK, '')
+    .replace(/^ {0,3}(`{3,}|~{3,})[ \t]*html[ \t]*(?:\r?\n|$)[\s\S]*?(?:^ {0,3}\1[ \t]*(?=\r?$)|(?![\s\S]))/gim, '')
+    .replace(/<\/?[a-z][\w:-]*(?:\s[^<>]*)?(?:\/?>|\/?$)|<$|<!--[^]*?(?:-->|$)/gi, '').trim();
+}
+
+// Preset rules also produce HTML fragments without a Markdown fence.
+export function fenceDisplayFragment(replacement) {
+  const source = replacement.trim();
+  if (!/^<(?:div|details|section|main|aside|table|span|style)\b/i.test(source)
+      || !/<\/(?:div|details|section|main|aside|table|span|style)\s*>$/i.test(source)) return replacement;
+  const longest = (source.match(/^ {0,3}`{3,}/gm) || []).reduce((max, line) => Math.max(max, line.trim().length), 2);
+  const fence = '`'.repeat(longest + 1);
+  return `\n${fence}html\n${source}\n${fence}\n`;
+}
+
+function languageOf(info) {
+  return info.trim().toLowerCase().split(/\s+/)[0];
+}
+
+function codeBlock(text, lang, closed) {
+  const html = closed && (lang === 'html' ? HTML_START.test(text) : !lang && BODY.test(text));
+  return { type: html ? 'html' : 'code', text, lang };
+}
+
+export function splitMessageBlocks(text, wasm = cardAssetsWasm()) {
   const source = String(text || '').replace(/\r\n/g, '\n');
   if (/^\s*(?:<!doctype\s+html\b|<html[\s>]|<body[\s>])/i.test(source) && BODY.test(source)) {
     return [{ type: 'html', text: source, lang: 'html' }];
   }
+  if (!source.includes('```') && !source.includes('~~~')) return [{ type: 'text', text: source }];
+  const layout = wasm?.layoutMessageFences?.(source);
+  if (layout) return layout.map(([kind, start, end, infoStart, infoEnd]) => {
+    const value = source.slice(start, end);
+    return kind === 0 ? { type: 'text', text: value } : codeBlock(value, languageOf(source.slice(infoStart, infoEnd)), kind === 1);
+  });
   const lines = source.split('\n');
   const blocks = [];
   let prose = [];
@@ -23,17 +69,16 @@ export function splitMessageBlocks(text) {
         continue;
       }
       const body = fence.lines.join('\n');
-      const html = fence.lang === 'html' ? HTML_START.test(body) : !fence.lang && BODY.test(body);
-      blocks.push({ type: html ? 'html' : 'code', text: body, lang: fence.lang });
+      blocks.push(codeBlock(body, fence.lang, true));
       fence = undefined;
     } else if (match) {
       flushProse();
-      fence = { marker: match[1], lang: match[2].trim().toLowerCase().split(/\s+/)[0], lines: [] };
+      fence = { marker: match[1], lang: languageOf(match[2]), lines: [] };
     } else {
       prose.push(line);
     }
   }
-  if (fence) blocks.push({ type: 'code', text: fence.lines.join('\n'), lang: fence.lang });
+  if (fence) blocks.push(codeBlock(fence.lines.join('\n'), fence.lang, false));
   flushProse();
   return blocks;
 }

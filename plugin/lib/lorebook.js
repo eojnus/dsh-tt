@@ -188,6 +188,127 @@ function filterByInclusionGroups(candidates, skipped) {
   return kept;
 }
 
+function activationOf({ entry, content }, activatedBy, matchedKey) {
+  return {
+    uid: entry.uid ?? entry.__index,
+    comment: entry.comment ?? '',
+    content,
+    position: Number(entry.position) || 0,
+    depth: entry.depth == null ? null : Number(entry.depth),
+    role: entry.role ?? 'system',
+    order: Number(entry.insertion_order ?? 100),
+    matchedKey,
+    constant: entry.constant === true,
+    activatedBy,
+    sticky: Number(entry.sticky) > 0,
+    outletName: entry.outletName ?? null,
+  };
+}
+
+function matchOptionsOf(entry) {
+  return {
+    useRegex: entry.useRegex === true,
+    caseSensitive: entry.caseSensitive === true,
+    matchWholeWords: entry.matchWholeWords === true,
+  };
+}
+
+function activateWithRust(prepared, state, settings, backend) {
+  if (!backend.activateLorebook || settings.estimate !== estimateTokens || settings.random !== Math.random) return null;
+  const budget = Number(settings.budget);
+  const limit = Number(settings.maxRecursionSteps) || 0;
+  if (![budget, limit, settings.turn].every(Number.isFinite)) return null;
+
+  const stateKeys = new Set();
+  const orderKinds = new Map();
+  let legacySort = false;
+  const input = [];
+  for (const { entry, content, blocked, forced } of prepared) {
+    const uid = entry.uid ?? entry.__index;
+    if (typeof uid !== 'number' && typeof uid !== 'string') return null;
+    const stateKey = String(uid);
+    const group = entry.group && entry.groupOverride !== true ? entry.group : null;
+    if (stateKeys.has(stateKey) || (group !== null && typeof group !== 'string')) return null;
+    stateKeys.add(stateKey);
+    const entryState = state.entries[stateKey];
+    if (entryState != null && (typeof entryState !== 'object' || !Object.hasOwn(state.entries, stateKey))) return null;
+    const uidOrder = Number(entry.uid ?? 0);
+    const order = Number(entry.insertion_order ?? 100);
+    const lexicalId = Number.isNaN(uidOrder);
+    // Mixed character and chat ids may produce a non-transitive JS comparator.
+    // Use its original ordering for those candidates while Rust owns the scan.
+    if (orderKinds.has(order) && orderKinds.get(order) !== lexicalId) legacySort = true;
+    orderKinds.set(order, lexicalId);
+    const delay = Number(entry.delay) || 0;
+    const sticky = Number(entry.sticky) || 0;
+    const cooldown = Number(entry.cooldown) || 0;
+    const groupWeight = Number(entry.groupWeight) || 1;
+    if (![order, lexicalId ? 0 : uidOrder, delay, sticky, cooldown, groupWeight,
+      settings.turn + sticky + cooldown].every(Number.isFinite)) return null;
+    const probability = Number(entry.probability);
+    input.push({ content, blocked, forced, group, groupWeight, order, uidOrder: lexicalId ? null : uidOrder,
+      skipKey: String(entry.uid ?? entry.comment), delay, sticky, cooldown,
+      recursionLevel: recursionLevelOf(entry.delayUntilRecursion),
+      stickyUntil: Number(entryState?.stickyUntil), cooldownUntil: Number(entryState?.cooldownUntil),
+      probability: entry.useProbability === true && Number.isFinite(probability) && probability < 100 ? probability : null,
+      constant: entry.constant === true, hasKeys: Array.isArray(entry.key) && entry.key.length > 0,
+      excludeRecursion: entry.excludeRecursion === true, preventRecursion: entry.preventRecursion === true,
+      ignoreBudget: entry.ignoreBudget === true,
+    });
+  }
+
+  let recursiveText;
+  let literalMatches;
+  const matched = [];
+  const result = backend.activateLorebook({ entries: input, turn: settings.turn, budget,
+    recursive: Boolean(settings.recursive), maxRecursionSteps: limit, legacySort }, {
+    startRound(text) {
+      recursiveText = text;
+      literalMatches = indexLiteralMatches(prepared, (item) => item.scanText + text, backend);
+    },
+    matchEntry(index) {
+      const { entry, scanText } = prepared[index];
+      const options = matchOptionsOf(entry);
+      const buffer = scanText + recursiveText;
+      const key = matchKeys(buffer, entry.key, options, literalMatches);
+      if (!key) return 0;
+      if (entry.selective !== false && !passesSecondary(buffer, entry, options, literalMatches)) return -1;
+      matched[index] = key;
+      return 1;
+    },
+    random: settings.random,
+    sortLegacy(candidates, grouped) {
+      return candidates.sort((a, b) => {
+        const left = input[a >>> 2];
+        const right = input[b >>> 2];
+        const priority = grouped ? right.groupWeight - left.groupWeight : Number((b & 3) === 0) - Number((a & 3) === 0);
+        return priority || left.order - right.order || (left.uidOrder ?? NaN) - (right.uidOrder ?? NaN);
+      });
+    },
+  });
+  if (!result) return null;
+
+  result.touched.forEach((touched, index) => {
+    if (!touched) return;
+    const { entry } = prepared[index];
+    const uid = entry.uid ?? entry.__index;
+    if (state.entries[uid] == null) state.entries[uid] = {};
+  });
+  for (const [index, stickyUntil, cooldownUntil] of result.timers) {
+    const { entry } = prepared[index];
+    const timer = state.entries[entry.uid ?? entry.__index];
+    if (stickyUntil !== null) timer.stickyUntil = stickyUntil;
+    if (cooldownUntil !== null) timer.cooldownUntil = cooldownUntil;
+  }
+  const activated = result.activated.map(([index, by]) => activationOf(prepared[index], by, by === 'key' ? matched[index] : null));
+  const skipped = result.skipped.map(([index, why]) => {
+    const { uid, comment } = prepared[index].entry;
+    return { uid, comment, why };
+  });
+  return buildLorebookResult(activated, skipped, { total: prepared.length, tokens: result.tokens, budget: settings.budget,
+    overflowed: result.overflowed, recursion: result.recursion, rounds: result.rounds }, backend);
+}
+
 /**
  * @param {object} input
  * @param {any[]} input.entries 世界书条目（ST 格式）
@@ -222,7 +343,6 @@ export function activateEntries({
   if (!state.entries || typeof state.entries !== 'object') state.entries = Object.create(null);
   const turn = Number(state.turn) || 0;
 
-  const matchOptions = { useRegex: false, caseSensitive: false, matchWholeWords: false };
   const list = (entries || [])
     .filter((entry) => entry && entry.enabled !== false && entry.disable !== true)
     .map((entry, index) => ({ ...entry, __index: index }))
@@ -246,6 +366,9 @@ export function activateEntries({
       blocked: blockedByDecorator,
     };
   });
+  const rustResult = activateWithRust(prepared, state, { turn, budget, estimate, random, recursive, maxRecursionSteps },
+    keywordBackend ?? cardAssetsWasm());
+  if (rustResult) return rustResult;
   const byUid = new Map(prepared.map((item) => [item.entry.uid ?? item.entry.__index, item]));
 
   const activated = [];
@@ -314,12 +437,7 @@ export function activateEntries({
         if (recursion > 0 && entry.excludeRecursion === true) { recordSkip(entry, 'excludeRecursion'); continue; }
         const keys = Array.isArray(entry.key) ? entry.key : [];
         if (!keys.length) { recordSkip(entry, 'no-keys'); continue; }
-        const entryOptions = {
-          ...matchOptions,
-          useRegex: entry.useRegex === true,
-          caseSensitive: entry.caseSensitive === true,
-          matchWholeWords: entry.matchWholeWords === true,
-        };
+        const entryOptions = matchOptionsOf(entry);
         const scanBuffer = scanBufferOf(item);
         matchedKey = matchKeys(scanBuffer, keys, entryOptions, literalMatches);
         if (!matchedKey) continue;
@@ -379,20 +497,7 @@ export function activateEntries({
       const cooldown = Number(entry.cooldown) || 0;
       if (sticky > 0) entryState.stickyUntil = turn + sticky;
       if (cooldown > 0) entryState.cooldownUntil = (sticky > 0 ? turn + sticky : turn) + cooldown;
-      const activation = {
-        uid,
-        comment: entry.comment ?? '',
-        content: item.content,
-        position: Number(entry.position) || 0,
-        depth: entry.depth == null ? null : Number(entry.depth),
-        role: entry.role ?? 'system',
-        order: Number(entry.insertion_order ?? 100),
-        matchedKey: item.matchedKey,
-        constant: entry.constant === true,
-        activatedBy: item.activatedBy,
-        sticky: sticky > 0,
-        outletName: entry.outletName ?? null,
-      };
+      const activation = activationOf(item, item.activatedBy, item.matchedKey);
       activated.push(activation);
       roundActivated.push(activation);
       if (entry.group && entry.groupOverride !== true && !claimedGroups.has(entry.group)) {
@@ -417,6 +522,50 @@ export function activateEntries({
     if (rounds > 50) break;
   }
 
+  return buildLorebookResult(activated, skipped, { total: list.length, tokens: tokensUsed, budget, overflowed, recursion, rounds },
+    keywordBackend ?? cardAssetsWasm());
+}
+
+function layoutLorebookWithRust(activated, backend) {
+  if (!backend?.layoutLorebookBuckets || !activated.every(({ position, depth, role, outletName }) =>
+    Number.isFinite(position) && (depth == null || Number.isFinite(depth)) && typeof role === 'string'
+    && (outletName == null || typeof outletName === 'string'))) return null;
+  const layout = backend.layoutLorebookBuckets(activated.map(({ position, depth, role, outletName }) =>
+    [position, depth ?? DEFAULT_DEPTH, role, outletName]));
+  if (!layout) return null;
+  const contentOf = (indices) => indices.map((index) => activated[index].content);
+  const [before, after, ANTop, ANBottom, , EMTop, EMBottom, outlet] = layout.positions.map(contentOf);
+  return { before, after, ANTop, ANBottom, EMTop, EMBottom,
+    depth: layout.depth.map((indices) => {
+      const { depth, role } = activated[indices.at(-1)];
+      return { depth: depth ?? DEFAULT_DEPTH, role, entries: contentOf(indices) };
+    }),
+    outlet, outlets: Object.assign(Object.create(null), Object.fromEntries(layout.outlets.map(([name, indices]) => [name, contentOf(indices)]))),
+  };
+}
+
+function buildLorebookResult(activated, skipped, stats, backend) {
+  return {
+    activated,
+    skipped,
+    buckets: layoutLorebookWithRust(activated, backend) ?? layoutLorebookWithJs(activated),
+    stats: {
+      total: stats.total,
+      activated: activated.length,
+      tokens: stats.tokens,
+      budget: stats.budget,
+      overflowed: stats.overflowed,
+      recursion: stats.recursion,
+      rounds: stats.rounds,
+      byActivation: activated.reduce((acc, item) => {
+        acc[item.activatedBy] = (acc[item.activatedBy] || 0) + 1;
+        return acc;
+      }, {}),
+    },
+  };
+}
+
+function layoutLorebookWithJs(activated) {
   const buckets = {
     before: [],
     after: [],
@@ -459,24 +608,7 @@ export function activateEntries({
     }
   }
 
-  return {
-    activated,
-    skipped,
-    buckets,
-    stats: {
-      total: list.length,
-      activated: activated.length,
-      tokens: tokensUsed,
-      budget,
-      overflowed,
-      recursion,
-      rounds,
-      byActivation: activated.reduce((acc, item) => {
-        acc[item.activatedBy] = (acc[item.activatedBy] || 0) + 1;
-        return acc;
-      }, {}),
-    },
-  };
+  return buckets;
 }
 
 /** ST 的位置是数字；角色卡内嵌世界书用字符串，扩展里可能又放在 extensions 里。 */

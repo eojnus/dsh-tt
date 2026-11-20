@@ -1,10 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { cardFixture, secondCardFixture } from './helpers.mjs';
+import { cardFixture, lorebookFixture, presetFixture, secondCardFixture } from './helpers.mjs';
 import { cardAssetsWasm, createCardAssetsWasm } from '../plugin/lib/card-assets-wasm.js';
-import { activateEntries } from '../plugin/lib/lorebook.js';
+import { activateEntries, createWorldInfoSession, normalizeCharacterBookEntries } from '../plugin/lib/lorebook.js';
 import { normalizeCard } from '../plugin/lib/card.js';
 import { extractCardJson, readPngTextChunks } from '../plugin/lib/png.js';
+import { runPromptPipeline } from '../plugin/lib/pipeline.js';
+import { parsePreset } from '../plugin/lib/prompt.js';
+import { splitMessageBlocks } from '../plugin/lib/message-html.js';
 
 const wasm = cardAssetsWasm();
 const fallback = createCardAssetsWasm(new Uint8Array([0, 1, 2]));
@@ -26,6 +29,98 @@ test('世界书：Rust 批量匹配与 JS 回退的激活结果一致', () => {
   const result = activateEntries({ ...input, keywordBackend: wasm });
   assert.deepEqual(result, activateEntries({ ...input, keywordBackend: fallback }));
   assert.deepEqual(result.activated.map((entry) => entry.uid), [1, 4, 5, 2]);
+});
+
+test('世界书 Rust 激活与 JS 跨回合一致，包括混合 ID、跳过轨迹及预算', () => {
+  const entries = [
+    ...normalizeCharacterBookEntries(lorebookFixture()),
+    { uid: 900, key: ['铁索'], content: '追加➀', insertion_order: 100, sticky: 1, cooldown: 1, group: '候选' },
+    { uid: 'chat:900', key: ['(?<=铁)索'], content: '追加➁', useRegex: true, group: '候选', groupWeight: 2, insertion_order: 100 },
+    { uid: 901, key: ['铁索'], content: '追加➂', insertion_order: 100, useProbability: true, probability: 35 },
+    { uid: 902, constant: true, content: '始终出场 😀', position: 7, outletName: '__proto__', ignoreBudget: true },
+  ];
+  const state = createWorldInfoSession();
+  const referenceState = createWorldInfoSession();
+  let activatedInWasm = 0;
+  let layouts = 0;
+  let actualRolls = 0;
+  let referenceRolls = 0;
+  const rolls = [0.9, 0.2, 0.6, 0.1];
+  const backend = { ...wasm,
+    activateLorebook(input, hooks) {
+      assert.equal(input.legacySort, true);
+      activatedInWasm++;
+      const result = wasm.activateLorebook(input, { ...hooks, random: () => rolls[actualRolls++ % rolls.length] });
+      assert.ok(result);
+      return result;
+    },
+    layoutLorebookBuckets(input) {
+      const result = wasm.layoutLorebookBuckets(input);
+      assert.ok(result);
+      layouts++;
+      return result;
+    },
+  };
+  for (const [turn, scanText, budget] of [[0, '铁索桥和雨声', 1000], [1, '没有命中', 12],
+    [2, '铁索桥和铜钱', 25], [3, '铁索桥', 1000]]) {
+    state.turn = referenceState.turn = turn;
+    const common = { entries, scanText, budget };
+    const actual = activateEntries({ ...common, session: state, keywordBackend: backend });
+    const expected = activateEntries({ ...common, session: referenceState, keywordBackend: fallback,
+      random: () => rolls[referenceRolls++ % rolls.length] });
+    assert.deepEqual(actual, expected);
+    assert.deepEqual(state, referenceState);
+  }
+  assert.equal(activatedInWasm, 4);
+  assert.equal(layouts, 4);
+  assert.equal(actualRolls, referenceRolls);
+  assert.ok(actualRolls > 0);
+});
+
+test('主聊天 Rust 扫描窗口与提示词计划保留 JS 模板、顺序和深度兼容', () => {
+  const card = normalizeCard(cardFixture());
+  const preset = parsePreset(presetFixture());
+  preset.prompts.push(
+    { identifier: 'begin', name: '前半段', content: '<% if (true) { %>起点' },
+    { identifier: 'end', name: '后半段', content: '终点<% } %>' },
+    { identifier: 'depth', content: '深度注入', injection_position: '1', injection_depth: 2 },
+  );
+  preset.order = [...preset.order, ...['begin', 'depth', 'end'].map((identifier) => ({ identifier }))];
+  const input = { card, preset, chatMessages: ['上一条', '甲出现了'], greeting: '开场白', entries: [
+    null, { uid: 'chat:10', key: ['甲'], content: '世界书正文', scanDepth: 1, position: 4, depth: 2 },
+  ] };
+  const called = new Set();
+  const backend = { ...wasm };
+  for (const name of ['buildLorebookScanWindows', 'activateLorebook', 'layoutLorebookBuckets', 'planMainPrompt', 'orderPromptDepth']) {
+    backend[name] = (...args) => {
+      const result = wasm[name](...args);
+      assert.ok(result, name);
+      called.add(name);
+      return result;
+    };
+  }
+  const actual = runPromptPipeline(input, backend);
+  const expected = runPromptPipeline(input, fallback);
+  for (const key of ['rendered', 'lorebook', 'systemText', 'depthText', 'sectionText', 'errors', 'stats']) {
+    assert.deepEqual(actual[key], expected[key], key);
+  }
+  assert.equal(called.size, 5);
+  assert.match(actual.systemText, /起点\s+终点/);
+  assert.equal(actual.depthText.includes('深度注入\n\n世界书正文'), true);
+});
+
+test('消息分块的 Rust 路径保留多语言、未闭合围栏和 HTML 判定', () => {
+  const samples = [
+    '前文 😀\n  ~~~~HTML\n<section>🎭 状态栏</section>\n  ~~~~~\uFEFF\n后文',
+    '前文\n```js\n\nconst a = "😀"\n```\n',
+    '```html\n\n```\n~~~\n<body>可渲染</body>\n~~~~',
+    '没有围栏的故事', '```', '\n```js\n', '````\n```\n🎭\n````',
+    '```js\n内容\n```带文字\n剩余内容', '    ```js\n正文\n    ```',
+  ];
+  assert.ok(wasm.layoutMessageFences(samples[0]));
+  for (const text of samples) assert.deepEqual(splitMessageBlocks(text, wasm), splitMessageBlocks(text, fallback));
+  assert.equal(wasm.layoutMessageFences('```\n\ud800\n```'), null);
+  assert.deepEqual(splitMessageBlocks('```\r特殊换行\n```', wasm), splitMessageBlocks('```\r特殊换行\n```', fallback));
 });
 
 test('角色卡归一化：WASM 与 JS 回退一致，保留原卡及扩展引用', () => {
