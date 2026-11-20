@@ -1,0 +1,8 @@
+# Generated files shipped with the plugin.
+/plugin/client.js linguist-generated=true
+/plugin/lib/card-assets-wasm-bytes.js linguist-generated=true
+/plugin/lib/dsh-generation.js linguist-generated=true
+
+# Bundled third-party dependencies.
+/src/tavern/vendor/** linguist-vendored=true
+/src/tavern/zod4.bundle.mjs linguist-vendored=true
