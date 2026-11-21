@@ -21,6 +21,11 @@ const input = {
 test('DSH 通过受认证的 Connection 路由将 Rust 组装的消息交给当前模型', async () => {
   let route;
   apply({ inject(services, mount) {
+    if (services.includes('profileContext')) return;
+    if (services.length === 1 && services[0] === 'llm') {
+      mount({ on(event) { assert.equal(event, 'llm/stream'); } });
+      return;
+    }
     assert.deepEqual(services, ['connection', 'llm', 'sessionController']);
     mount({
       connection: { fetch: { register(value) { route = value; } } },
@@ -66,6 +71,26 @@ test('辅助生成拒绝脚本指定外部 API，并且取消响应会取消模�
   assert.equal((await reader.read()).done, false);
   await reader.cancel();
   assert.equal(signal.aborted, true);
+});
+
+test('ST 扩展原始生成只发送显式消息，并映射响应长度和温度', async () => {
+  const response = await handleAuxiliaryGeneration({
+    sessionController: { async resolveAgent() { return { agent: { model: { current: () => selection } } }; } },
+    llm: { async *stream(options) {
+      assert.equal(options.maxTokens, 40);
+      assert.equal(options.temperature, 0.4);
+      assert.deepEqual(options.messages.map(({ role, content }) => [role, content[0].text]),
+        [['system', '仅扩展上下文'], ['assistant', '预填充']]);
+      yield { type: 'text-delta', text: '完成' };
+      yield { type: 'finish', reason: { kind: 'stop' } };
+    } },
+  }, request({
+    ...input, mode: 'generateRaw',
+    options: { prompt: [{ role: 'system', content: '仅扩展上下文' }, { role: 'assistant', content: '预填充' }],
+      responseLength: 40, temperature: 0.4 },
+  }));
+  assert.equal(response.status, 200);
+  assert.match(await response.text(), /"type":"done"/);
 });
 
 test('Rust 只把扫描注入交给世界书，把聊天注入加入提示词', () => {

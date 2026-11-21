@@ -79,7 +79,10 @@ export function normalizeCard(raw, wasm = cardAssetsWasm()) {
     ...text,
     characterBook,
     depthPrompt: depthPrompt && typeof depthPrompt === 'object'
-      ? { prompt: str(depthPrompt.prompt), depth: Number(depthPrompt.depth) || 4, role: str(depthPrompt.role) || 'system' }
+      ? { prompt: str(depthPrompt.prompt),
+        depth: depthPrompt.depth == null || depthPrompt.depth === '' || !Number.isFinite(Number(depthPrompt.depth))
+          ? 4 : Math.max(0, Math.floor(Number(depthPrompt.depth))),
+        role: str(depthPrompt.role) || 'system' }
       : null,
     extensions,
     thScripts,

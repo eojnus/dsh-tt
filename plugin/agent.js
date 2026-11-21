@@ -23,6 +23,7 @@ import { parsePreset, applyPresetOverrides } from './lib/prompt.js';
 import { runPromptPipeline, worldInfoHistoryLimit } from './lib/pipeline.js';
 import { applyUserInputRegex } from './lib/regex.js';
 import { splitChatInput } from './lib/chat-wire.js';
+import { forgetRoleplayRequest, rememberRoleplayRequest } from './lib/roleplay-stream.js';
 
 export const name = 'dsh-tt-roleplay-agent';
 
@@ -137,6 +138,8 @@ export function apply(ctx, config = {}) {
       systemText: '',
       depthText: '',
       sectionText: '',
+      sequence: null,
+      depth: [],
       lastKey: '',
       renders: 0,
       // 世界书计时状态（sticky/cooldown/delay）按会话独立推进。
@@ -145,6 +148,8 @@ export function apply(ctx, config = {}) {
       chatWorldbookKey: '',
       worldInfoChat: undefined,
       worldInfoChatKey: '',
+      userInput: '',
+      lastMessageId: undefined,
       scriptPrompts: [],
       scriptPromptsKey: '',
       // 卡 + 预设自带的 ST 正则脚本（prompt 作用域用）。
@@ -168,13 +173,18 @@ export function apply(ctx, config = {}) {
       minActivations: config.worldInfoMinActivations,
       greeting: state.greeting,
       chatMessages: state.worldInfoChat,
+      userInput: state.userInput,
+      lastMessageId: state.lastMessageId,
       chatWorldbook: state.chatWorldbook,
       scriptPrompts: state.scriptPrompts,
+      nativeChat: true,
     });
     state.regexRules = result.regexRules;
     state.systemText = result.systemText;
     state.depthText = result.depthText;
     state.sectionText = result.sectionText;
+    state.sequence = result.rendered.sequence;
+    state.depth = [...result.rendered.injected, ...result.rendered.depth];
     state.renders += 1;
 
     const worldInfo = result.lorebook.stats;
@@ -318,9 +328,12 @@ export function apply(ctx, config = {}) {
         : [];
       const chat = [state.greeting, ...history, body].filter(Boolean).slice(-depth);
       const key = assetKeyOf(chat);
-      if (key !== state.worldInfoChatKey) {
+      const lastMessageId = Number.isSafeInteger(binding.lastMessageId) ? binding.lastMessageId : undefined;
+      if (key !== state.worldInfoChatKey || body !== state.userInput || lastMessageId !== state.lastMessageId) {
         state.worldInfoChat = chat;
         state.worldInfoChatKey = key;
+        state.userInput = body;
+        state.lastMessageId = lastMessageId;
         changed = true;
       }
     }
@@ -355,7 +368,7 @@ export function apply(ctx, config = {}) {
       return sharedRecord;
     }
 
-    const record = { agent: agent ?? null, state: createState(), disposeSection: null };
+    const record = { agent: agent ?? null, state: createState(), disposeSection: null, complete: false };
     // 初始绑定：配置指定的卡，否则资产库第一张。
     const initial = resolveActive(library, config.activeCharacter);
     if (initial?.card) {
@@ -381,6 +394,7 @@ export function apply(ctx, config = {}) {
     if (target?.systemPrompt) {
       try {
         record.disposeSection = target.systemPrompt.section(section);
+        record.complete = true;
       } catch (error) {
         log(`[${shortId(agent)}] complete 段被拒，退回普通段：`, error?.message || error);
         try {
@@ -392,6 +406,7 @@ export function apply(ctx, config = {}) {
       // agent 释放时清掉记录（段的撤销由 agent.ctx 自己负责）。
       try {
         target.effect(() => () => {
+          forgetRoleplayRequest(agent);
           if (agent?.id && records.get(agent.id) === record) records.delete(agent.id);
           if (sharedRecord === record) sharedRecord = null;
         }, 'dsh-tt.roleplay.record');
@@ -454,14 +469,26 @@ export function apply(ctx, config = {}) {
         const record = recordFor(payload?.agent);
         // 兜底：若 inbox 事件没有触发（例如恢复会话），这里再应用一次绑定，
         // 同时让 state.regexRules 与当前卡/预设对齐。
-        const firstEnvelope = entries.find(({ envelope }) => envelope?.binding)?.envelope;
-        if (firstEnvelope) applyBinding(record, firstEnvelope.binding, firstEnvelope.body);
+        const latest = entries.findLast(({ envelope }) => envelope?.binding);
+        if (latest) applyBinding(record, latest.envelope.binding, latest.envelope.body);
         const rules = record.state.regexRules;
         const messages = rules.length
           ? entries.map(({ message, envelope }, index) => envelope?.binding
             ? replaceMessageText(message, applyUserInputRegex(envelope.body, rules))
             : clean[index])
           : clean;
+        if (latest && record.state.sequence) {
+          const { temp_openai, temperature, openai_max_tokens, custom_stopping_strings } = record.state.preset?.raw ?? {};
+          rememberRoleplayRequest(payload?.agent, {
+            userId: messages.findLast((message) => message.source?.kind !== 'runtime-context')?.id,
+            sequence: record.state.sequence,
+            greeting: record.state.greeting,
+            depth: record.state.depth,
+            sectionText: record.state.sectionText,
+            complete: record.complete,
+            presetSettings: { temp_openai, temperature, openai_max_tokens, custom_stopping_strings },
+          });
+        }
         return { ...decision, messages };
       } catch (error) {
         log('pre-step 处理失败：', error?.message || error);

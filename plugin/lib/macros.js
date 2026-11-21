@@ -43,7 +43,7 @@ export function substitute(text, env = {}, options = {}) {
   out = out.replace(/\{\{\/\/([\s\S]*?)\}\}/g, '');
 
   // 1.5 变量宏：{{setvar::k::v}} 写入且不产出文本；{{getvar::k}} 读回（同一次渲染内可见）
-  const store = Object.assign(Object.create(null), env.__vars ?? {});
+  const store = options.variableStore ?? Object.assign(Object.create(null), env.__vars ?? {});
   out = out.replace(/\{\{setvar::([^:}\s]+)::([\s\S]*?)\}\}/gi, (_, key, value) => {
     store[key.trim()] = value;
     return '';

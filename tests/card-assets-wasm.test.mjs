@@ -109,6 +109,22 @@ test('主聊天 Rust 扫描窗口与提示词计划保留 JS 模板、顺序和�
   assert.equal(actual.depthText.includes('深度注入\n\n世界书正文'), true);
 });
 
+test('Rust 模板编排按预设顺序调用宿主装饰器，内存增长和异常后仍可接收文本', () => {
+  const input = { prompts: [], order: ['worldInfoAfter', 'chatHistory', 'worldInfoBefore']
+    .map((identifier) => ({ identifier, enabled: true })) };
+  assert.throws(() => wasm.prepareChatTemplates(input, () => { throw new Error('装饰器错误'); }), /装饰器错误/);
+  const order = [];
+  const large = '世界书😀'.repeat(120000);
+  const result = wasm.prepareChatTemplates(input, (source) => {
+    order.push(source);
+    return source === 'worldInfoAfter' ? large : source;
+  });
+  assert.deepEqual(order, ['worldInfoAfter', 'authorsNote', 'worldInfoBefore']);
+  assert.equal(result.groups[0].content, large);
+  assert.equal(result.groups[1].history, true);
+  assert.equal(result.groups[2].content, 'authorsNote\n\nworldInfoBefore');
+});
+
 test('消息分块的 Rust 路径保留多语言、未闭合围栏和 HTML 判定', () => {
   const samples = [
     '前文 😀\n  ~~~~HTML\n<section>🎭 状态栏</section>\n  ~~~~~\uFEFF\n后文',

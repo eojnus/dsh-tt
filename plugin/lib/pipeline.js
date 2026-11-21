@@ -131,7 +131,9 @@ export function runPromptPipeline(input = {}, wasm = cardAssetsWasm()) {
     ? input.entries
     : worldInfoEntries(card?.characterBook, input.chatWorldbook);
 
-  const env = createMacroEnv({ card, userName, maxPrompt: maxContext, maxContext });
+  const env = createMacroEnv({ card, userName, userDescription: input.userDescription,
+    lastMessage: input.chatMessages?.findLast(Boolean), lastMessageId: input.lastMessageId,
+    input: input.userInput, maxPrompt: maxContext, maxContext, maxResponse: preset?.raw?.openai_max_tokens });
   const lorebookByName = new Map();
   const scope = createEjsScope(variables, {
     getwi: (name) => lorebookByName.get(name) ?? '',
@@ -165,7 +167,7 @@ export function runPromptPipeline(input = {}, wasm = cardAssetsWasm()) {
   });
   for (const entry of lorebook.activated) lorebookByName.set(entry.comment, entry.content);
 
-  const rendered = renderPrompt({ card, preset, lorebook, env, ejsScope: scope, wasm });
+  const rendered = renderPrompt({ card, preset, lorebook, env, ejsScope: scope, wasm, nativeChat: input.nativeChat });
   if (scriptPrompts?.depth.length) {
     rendered.injected.push(...scriptPrompts.depth);
     rendered.trace.injected = rendered.injected.length;

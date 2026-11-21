@@ -44,8 +44,128 @@ fn insert_at_depth(history: Vec<Value>, entries: &[Value]) -> Result<Vec<Value>,
     Ok(output)
 }
 
+/// Assemble request entries without serializing DSH history blocks through WASM.
+/// An index keeps attachments, tool results and adapter replay metadata intact.
+pub fn assemble_chat(input: &Value) -> Option<Value> {
+    let roles = input["historyRoles"].as_array()?;
+    let sequence = input["sequence"].as_array()?;
+    let depth = input["depth"].as_array()?;
+    let mut output = Vec::new();
+    for entry in sequence {
+        if let Some(enabled) = entry["history"].as_bool() {
+            let mut history = Vec::new();
+            if enabled {
+                push_prompt(&mut history, "assistant", input["greeting"].as_str().unwrap_or_default());
+            }
+            let start = if enabled { 0 } else {
+                roles.iter().rposition(|role| role.as_str() == Some("user")).unwrap_or(0)
+            };
+            history.extend(roles.iter().enumerate().skip(start)
+                .map(|(index, _)| json!({"index": index})));
+            let mut entries: Vec<_> = depth.to_vec();
+            // ST builds injection buckets from newest to oldest and then
+            // reverses the result when serializing the chat history.
+            entries.sort_by_key(|entry| {
+                let weight = match entry["role"].as_str() {
+                    Some("assistant") => 0,
+                    Some("user") => 1,
+                    _ => 2,
+                };
+                (entry["order"].as_i64().unwrap_or(100), weight)
+            });
+            output.extend(insert_at_depth(history, &entries).ok()?);
+        } else {
+            push_explicit(&mut output, entry).ok()?;
+        }
+    }
+    adapt_system_messages(&mut output, roles, input["systemMode"].as_str().unwrap_or("native"));
+    if let Some(last) = output.last_mut() {
+        if last["role"].as_str() == Some("assistant") && !last["content"].is_null() {
+            last["prefix"] = Value::Bool(true);
+        }
+    }
+    Some(json!({ "entries": output, "controls": sampling(&input["presetSettings"]) }))
+}
+
+fn adapt_system_messages(output: &mut [Value], roles: &[Value], mode: &str) {
+    if mode == "native" {
+        return;
+    }
+    let mut any_conversation = false;
+    let mut previous = None;
+    let mut system = String::new();
+    for item in output {
+        if let Some(index) = item["index"].as_u64() {
+            previous = roles.get(index as usize).and_then(Value::as_str);
+            any_conversation = any_conversation || previous != Some("system");
+            continue;
+        }
+        match item["role"].as_str() {
+            Some("system") if !any_conversation
+                || (mode == "snapshot" && matches!(previous, Some("user" | "tool" | "system"))) =>
+            {
+                if !system.is_empty() {
+                    system.push_str("\n\n");
+                }
+                system.push_str(item["content"].as_str().unwrap_or_default());
+                item["content"] = json!(system);
+                previous = Some("system");
+            }
+            Some("system") => {
+                // Preserve position for Messages routes where a system message
+                // would be hoisted, rejected, or replace the whole prompt.
+                item["role"] = json!("user");
+                previous = Some("user");
+            }
+            Some("assistant") => {
+                any_conversation = true;
+                previous = Some("assistant");
+            }
+            _ => {
+                any_conversation = true;
+                previous = Some("user");
+            }
+        }
+    }
+}
+
+fn sampling(preset: &Value) -> Value {
+    let mut output = serde_json::Map::new();
+    if let Some(temperature) = preset["temp_openai"].as_f64()
+        .or_else(|| preset["temperature"].as_f64())
+        .filter(|value| (0.0..=2.0).contains(value))
+    {
+        output.insert("temperature".into(), json!(temperature));
+    }
+    if let Some(tokens) = preset["openai_max_tokens"].as_u64().filter(|&value| value > 0 && value <= u32::MAX as u64) {
+        output.insert("maxTokens".into(), json!(tokens));
+    }
+    let stops = &preset["custom_stopping_strings"];
+    let parsed = stops.as_str().and_then(|text| serde_json::from_str::<Value>(text).ok());
+    if let Some(stops) = parsed.as_ref().unwrap_or(stops).as_array() {
+        let values: Vec<_> = stops.iter().filter_map(Value::as_str)
+            .filter(|text| !text.is_empty()).collect();
+        if !values.is_empty() {
+            output.insert("stop".into(), json!(values));
+        }
+    }
+    Value::Object(output)
+}
+
 pub fn assemble(input: &Value) -> Result<Vec<Value>, &'static str> {
     let options = &input["options"];
+    if input["mode"] == "generateRaw" && !options["prompt"].is_null() {
+        let mut messages = Vec::new();
+        if let Some(text) = options["prompt"].as_str() {
+            push_prompt(&mut messages, "user", text);
+        } else if let Some(prompt) = options["prompt"].as_array() {
+            for entry in prompt { push_explicit(&mut messages, entry)?; }
+        } else {
+            return Err("扩展的 generateRaw prompt 必须为文本或消息数组");
+        }
+        if messages.is_empty() { return Err("扩展的 generateRaw 至少需要一条提示词"); }
+        return Ok(messages);
+    }
     let order = options["ordered_prompts"].as_array();
     if order.is_none() && !options["ordered_prompts"].is_null() {
         return Err("ordered_prompts 必须是数组");
@@ -101,6 +221,18 @@ pub fn assemble(input: &Value) -> Result<Vec<Value>, &'static str> {
         return Err("辅助生成至少需要一条提示词");
     }
     Ok(output)
+}
+
+pub fn auxiliary_controls(input: &Value) -> Value {
+    let options = &input["options"];
+    if input["mode"] != "generateRaw" || options["prompt"].is_null() {
+        return json!({});
+    }
+    sampling(&json!({
+        "temperature": options["temperature"],
+        "openai_max_tokens": options.get("max_tokens").unwrap_or(&options["responseLength"]),
+        "custom_stopping_strings": options["stop"],
+    }))
 }
 
 pub fn partition_injections(input: &Value) -> Option<Value> {

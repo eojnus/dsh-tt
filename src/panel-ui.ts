@@ -127,9 +127,12 @@ function ChatComposer({ inputRef, value, sending, enabled, status, onChange, onS
 }) {
   return h('form', { className: 'tt-box', onSubmit(event: Event) { event.preventDefault(); if (enabled && !sending && value.trim()) onSubmit(); } },
     h('textarea', {
-      className: 'tt-ta', ref: inputRef, rows: 2, value,
+      id: 'send_textarea', className: 'tt-ta', ref: inputRef, rows: 2, value,
       'aria-label': '对话消息', placeholder: '写下你的回应…',
       onChange: (event: { target: HTMLTextAreaElement }) => onChange(event.target.value),
+      onInput: (event: { currentTarget: HTMLTextAreaElement; nativeEvent: Event }) => {
+        if (!event.nativeEvent.isTrusted) onChange(event.currentTarget.value);
+      },
       onKeyDown(event: EnterEvent) {
         if (!shouldSubmit(event)) return;
         event.preventDefault();

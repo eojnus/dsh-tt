@@ -6,6 +6,7 @@ import path from 'node:path';
 import { FIXTURES } from './helpers.mjs';
 import { apply, resolveAssetRoots } from '../plugin/agent.js';
 import { cardFixture, secondCardFixture, presetFixture } from './helpers.mjs';
+import { mountRoleplayStream } from '../plugin/lib/roleplay-stream.js';
 
 const MARK = '\u0000TT\u0000';
 const originalLog = console.log;
@@ -81,6 +82,61 @@ test('资产根目录：默认是项目根下的 参考/ 与 assets/，可用 as
   assert.equal(resolveAssetRoots({ assetsDir: 'D:/assets-root' })[0].replace(/\\/g, '/'), 'D:/assets-root/参考');
   // 硬编码路径必须消失（这是本轮修的 bug）。
   assert.equal(roots.some((root) => root.startsWith('X:')), false);
+});
+
+test('主聊天通过 Rust 编排卡片和预设，以角色消息向 DSH 发送历史后指令和助手前缀', async () => {
+  const harness = boot();
+  const agent = { ...makeAgent('native-roleplay'), session: { id: 'native-roleplay-session' } };
+  const message = envelope({
+    cardJson: { name: '守门人', post_history_instructions: '{{original}}，始终记住钥匙<% } %>',
+      extensions: { depth_prompt: { prompt: '此刻下雨', depth: 0, role: 'user' } } },
+    presetJson: {
+      temp_openai: 0.5, openai_max_tokens: 500, custom_stopping_strings: '["结束"]',
+      assistant_prefill: '<%= getvar("开头") %>{{getvar::引号}} ',
+      prompts: [
+        { identifier: 'main', content: '<% if (getvar("启用")) { %>用中文' },
+        { identifier: 'jailbreak', content: '保持第三人称' },
+        { identifier: 'format', role: 'user', content: '保留引号{{setvar::引号::左}} {{lastMessageId}} {{input}}' },
+      ],
+      prompt_order: [{ order: ['main', 'chatHistory', 'jailbreak', 'format'].map((identifier) => ({ identifier, enabled: true })) }],
+    },
+    variables: { 开头: '「', 启用: true }, greeting: '你来了。', lastMessageId: 1,
+  }, '我推门。');
+  message.role = 'user';
+  harness.emit('agent/inbox/inserted', { agent, message });
+  const accepted = await harness.emit('agent/pre-step', { agent }, async () => ({ kind: 'enter', messages: [message] }));
+  const user = Object.freeze(accepted.messages[0]);
+  const context = { id: 'runtime', role: 'user', source: { kind: 'runtime-context' }, content: [{ type: 'text', text: '运行时' }] };
+  const system = { role: 'system', source: { kind: 'system-prompt' }, content: [{ type: 'text', text: '旧扁平提示词' }] };
+  let forwarded;
+  let dispatch;
+  const llm = { async *stream(options) {
+    forwarded = options;
+    yield { type: 'text-delta', text: '雨停了' };
+    yield { type: 'finish', reason: { kind: 'stop' } };
+  } };
+  mountRoleplayStream({ llm, on(_event, hook) { dispatch = hook; } });
+  const signal = new AbortController().signal;
+  const options = Object.freeze({ provider: 'configured', model: 'chat', sessionId: agent.session.id, signal,
+    messages: Object.freeze([system, user, context]) });
+  const chunks = [];
+  for await (const chunk of dispatch(options, () => assert.fail('角色扮演请求未接管'))) chunks.push(chunk);
+  assert.equal(chunks.at(-1).reason.kind, 'stop');
+  assert.equal(forwarded.signal, signal);
+  assert.equal(forwarded.messages[2], user);
+  assert.equal(forwarded.messages[3], context);
+  assert.equal(options.messages[0], system);
+  assert.deepEqual(forwarded.messages.map(({ role, content }) => [role, content[0].text]), [
+    ['system', '用中文'], ['assistant', '你来了。'], ['user', '我推门。'], ['user', '运行时'],
+    ['user', '此刻下雨'], ['system', '保持第三人称，始终记住钥匙'], ['user', '保留引号 1 我推门。'], ['assistant', '「左 '],
+  ]);
+  assert.equal(forwarded.temperature, 0.5);
+  assert.equal(forwarded.maxTokens, 500);
+  assert.deepEqual(forwarded.stop, ['结束']);
+  assert.equal(dispatch(forwarded, () => 'separate request'), 'separate request');
+  assert.equal(dispatch({ ...options, sessionId: 'unrelated' }, () => 'ordinary chat'), 'ordinary chat');
+  for (const effect of agent.effects) effect()();
+  assert.equal(dispatch(options, () => 'disposed'), 'disposed');
 });
 
 test('每个 agent 注册自己的提示词段（会话隔离）', () => {

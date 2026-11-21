@@ -1,4 +1,5 @@
 type AuxOptions = {
+  prompt?: string | { role: string; content: string }[];
   generation_id?: string;
   user_input?: string;
   should_stream?: boolean;
@@ -68,7 +69,7 @@ function createGenerationBridge({ post, emit, chat, format, events, collectInjec
     const id = config.generation_id || `dsh-tt-generation-${++sequence}`;
     if (pending.has(id)) return Promise.reject(new Error(`生成 ID 已在使用：${id}`));
     emit(events.GENERATION_REQUESTED, id, mode, config);
-    const history = chat.filter((message) => !message.is_system);
+    const history = mode === 'generateRaw' && config.prompt != null ? [] : chat.filter((message) => !message.is_system);
     const offset = typeof config.user_input === 'string' && config.user_input.length > 0 ? 1 : 0;
     const messages = history.map((message, index) => ({
       role: message.is_user ? 'user' : 'assistant',

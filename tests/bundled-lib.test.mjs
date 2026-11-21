@@ -28,6 +28,7 @@ test('聊天楼层与世界书历史排除系统事件、原生推理和内部�
   const input = packChatInput('玩家正文', { presetJson: { name: '内部预设' }, worldInfoHistory: ['内部历史'] });
   const floors = toChatFloors([
     { type: 'event', event: { type: 'system/message', data: { content: '仅供模型使用' } } },
+    { type: 'user/message', data: { source: { kind: 'runtime-context' }, content: 'DSH 运行时上下文' } },
     { type: 'user/message', seq: 1, data: { content: [{ text: input.slice(0, 10) }, { text: input.slice(10) }] } },
     { type: 'user/message', seq: 2, data: { content: '\u0000TT\u0000未完成的内部数据' } },
     { type: 'assistant/message', seq: 3, data: { message: { content: '正常回复' } } },
@@ -41,6 +42,23 @@ test('聊天楼层与世界书历史排除系统事件、原生推理和内部�
     ['assistant', '正常回复'],
     ['assistant', '正文<UpdateVariable>脚本数据</UpdateVariable>'],
   ]);
+});
+
+test('Rust 用回合和步骤结算实时回复，聊天正文和思考保留原始分片', () => {
+  const { liveAssistantReply, mergeChatFloors } = bundled['chat-wire'];
+  const chunk = (attemptId, type, text) => ({ type: 'assistant/live-chunk', time: 3,
+    data: { turn: 1, step: 2, attemptId, chunk: { type, text } } });
+  const aborted = { type: 'assistant/attempt', data: { turn: 1, step: 2 } };
+  const retry = [
+    chunk('old', 'text-delta', '旧回复'), aborted, chunk('new', 'reasoning-delta', '单独的推理'),
+    chunk('new', 'text-delta', '\ud83d'), chunk('new', 'text-delta', '\ude00'),
+    { type: 'step/end', data: { turn: 1, step: 1 } },
+  ];
+  assert.deepEqual(liveAssistantReply(retry), { attemptId: 'new', key: 'reply-1-2', time: 3, text: '😀', reasoning: '单独的推理' });
+  assert.equal(liveAssistantReply([...retry, { type: 'assistant/message', data: { turn: 1, step: 2 } }]), null);
+  const old = [1, 2, 3, 4].map((seq) => ({ seq, text: '旧内容' }));
+  const recent = [2, 3].map((seq) => ({ seq, text: '新内容' }));
+  assert.deepEqual(mergeChatFloors(old, recent, 3), [...recent, old[3]]);
 });
 
 test('transformModule：具名导出被识别，相对导入被改写', () => {

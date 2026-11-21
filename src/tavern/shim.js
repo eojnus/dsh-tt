@@ -34,6 +34,7 @@
     worldbookName: INIT.worldbookName || '角色世界书',
     worldbookEntries: INIT.worldbookEntries || [],
     chatWorldbook: INIT.chatWorldbook,
+    chatMetadata: INIT.extensionMetadata || {},
     variables: INIT.variables || {},
     messages: INIT.messages || [],
     extensionSettings: INIT.extensionSettings || {},
@@ -691,6 +692,10 @@
   window.retrieveDisplayedMessage = window.formatAsDisplayedMessage;
   window.refreshOneMessage = function (messageId) { post({ tt: 'refresh', index: messageId }); };
   window.triggerSlash = function (command) {
+    if (hostExtensions?.length) return executeExtensionCommands(command).then(function (result) {
+      if (result.isError) throw new Error(result.errorMessage);
+      return result.pipe;
+    });
     try { return core.slashCommand(command); } catch (error) {
       toastr.error(String(error && error.message ? error.message : error), '命令失败');
       throw error;
@@ -801,16 +806,55 @@
     format: applyRegexes, events: window.iframe_events, collectInjections: promptInjections.collect });
   window.generate = function (options) { return generation.generate('generate', options); };
   window.generateRaw = function (options) { return generation.generate('generateRaw', options); };
+
+  async function stGenerateRaw(options) {
+    if (options?.prompt == null) return window.generateRaw(options);
+    var data = { messages: Array.isArray(options.prompt) ? options.prompt : [{ role: 'user', content: options.prompt }],
+      max_tokens: options.responseLength };
+    await eventEmitAndWait(TAVERN_EVENTS.CHAT_COMPLETION_SETTINGS_READY, data);
+    return window.generateRaw(Object.assign({}, options, {
+      prompt: data.messages, temperature: data.temperature, max_tokens: data.max_tokens, stop: data.stop,
+    }));
+  }
   window.stopGenerationById = generation.stop;
   window.stopAllGeneration = generation.stopAll;
   window.getModelList = function () { return Promise.resolve([]); };
   window.getProxyPresetNames = function () { return Promise.resolve([]); };
-  window.getPresetNames = function () { return Promise.resolve(INIT.presetName ? [INIT.presetName] : []); };
+  var presetViews = INIT.presetViews || {};
+  var presetWrites = new Map();
+  var presetSequence = 0;
+  window.getPresetNames = function () { return INIT.presetName ? [INIT.presetName] : []; };
   window.getLoadedPresetName = function () { return INIT.presetName || '默认'; };
-  window.getPreset = function () { return Promise.resolve(null); };
+  window.getPreset = function (name) {
+    var preset = name === 'in_use' ? presetViews.active : name === INIT.presetName ? presetViews.saved : null;
+    if (!preset) throw new Error('DSH TH 宿主：找不到预设「' + name + '」');
+    return structuredClone(preset);
+  };
   window.loadPreset = function () { return Promise.resolve(); };
-  window.replacePreset = function () { throw new Error('DSH TH 宿主：预设写入未接通'); };
-  window.updatePresetWith = function () { throw new Error('DSH TH 宿主：预设写入未接通'); };
+  window.replacePreset = async function (name, preset) {
+    if (!((name === 'in_use' && presetViews.active) || (name === INIT.presetName && presetViews.saved))) {
+      throw new Error('DSH TH 宿主：找不到预设「' + name + '」');
+    }
+    return new Promise(function (resolve, reject) {
+      var id = ++presetSequence;
+      var timer = setTimeout(function () {
+        presetWrites.delete(id);
+        reject(new Error('DSH TH 宿主：预设写入超时'));
+      }, 5000);
+      presetWrites.set(id, function (error, views) {
+        clearTimeout(timer);
+        presetWrites.delete(id);
+        if (error) reject(new Error(error));
+        else { presetViews = views; resolve(); }
+      });
+      post({ tt: 'preset-write', id: id, name: name, preset: preset });
+    });
+  };
+  window.updatePresetWith = async function (name, updater, options) {
+    var next = await updater(window.getPreset(name));
+    await window.replacePreset(name, next, options);
+    return window.getPreset(name);
+  };
   window.createPreset = function () { throw new Error('DSH TH 宿主：预设写入未接通'); };
   window.createOrReplacePreset = function () { throw new Error('DSH TH 宿主：预设写入未接通'); };
   window.deletePreset = function () { throw new Error('DSH TH 宿主：预设写入未接通'); };
@@ -842,9 +886,18 @@
     });
   };
   window.getTavernHelperExtensionId = function () { return 'JS-Slash-Runner'; };
-  window.getExtensionType = function () { return 'local'; };
-  window.getExtensionStatus = function () { return Promise.resolve({ installed: true }); };
-  window.isInstalledExtension = function () { return Promise.resolve(true); };
+  var hostExtensions = Array.isArray(INIT.extensions) ? INIT.extensions : [];
+  function findHostExtension(name) {
+    var key = String(name || '').toLowerCase().replace(/^third-party\//, '');
+    return hostExtensions.find(function (item) { return item.slug === key || item.id === key; });
+  }
+  window.getExtensionType = function (name) { return findHostExtension(name) ? 'local' : 'system'; };
+  window.getExtensionStatus = function (name) {
+    var item = findHostExtension(name);
+    return Promise.resolve({ installed: Boolean(item || ['JS-Slash-Runner', 'ST-Prompt-Template'].includes(name)),
+      enabled: Boolean(item || ['JS-Slash-Runner', 'ST-Prompt-Template'].includes(name)) });
+  };
+  window.isInstalledExtension = async function (name) { return (await window.getExtensionStatus(name)).installed; };
   window.tavern_events = TAVERN_EVENTS;
 
   // 世界书写入 API：明确拒绝，避免脚本以为写成功了。
@@ -861,8 +914,115 @@
 
   // ── SillyTavern 上下文 ────────────────────────────────────
   var headers = { 'Content-Type': 'application/json', 'X-CSRF-Token': 'dsh-tt' };
-  var extensionPrompts = {};
+  var extensionPrompts = Object.create(null);
+  var extensionPromptTypes = { NONE: -1, IN_PROMPT: 0, IN_CHAT: 1, BEFORE_PROMPT: 2 };
+  var extensionPromptRoles = { SYSTEM: 0, USER: 1, ASSISTANT: 2 };
+  function collectExtensionPrompts() {
+    return Object.keys(extensionPrompts).sort().flatMap(function (id) {
+      var prompt = extensionPrompts[id];
+      if (prompt.position !== extensionPromptTypes.IN_CHAT && prompt.position !== extensionPromptTypes.NONE) return [];
+      return [{ id: id, content: prompt.value, depth: Math.max(0, Math.trunc(Number(prompt.depth) || 0)),
+        role: ['system', 'user', 'assistant'][prompt.role] || (['user', 'assistant'].includes(prompt.role) ? prompt.role : 'system'),
+        position: prompt.position === extensionPromptTypes.IN_CHAT ? 'in_chat' : 'none',
+        should_scan: prompt.scan === true, filter: prompt.filter }];
+    });
+  }
   var functionTools = new Map();
+  var extensionCalls = new Map();
+  var extensionCallSequence = 0;
+  var slashCommands = new Map();
+  var slashCommandProps = { fromProps: function (props) { return props; } };
+  var slashCommandParser = {
+    addCommandObject: function (command) {
+      if (!command || typeof command.name !== 'string' || typeof command.callback !== 'function') {
+        throw new Error('扩展斜杠命令格式无效');
+      }
+      for (var alias of [command.name].concat(command.aliases || [])) {
+        slashCommands.set(String(alias).toLowerCase(), command.callback);
+      }
+      post({ tt: 'extension-commands', names: Array.from(slashCommands.keys()) });
+    },
+  };
+  var compatibilityBooks = new Map();
+  for (var suppliedBook of [INIT.extensionBooks?.character, INIT.extensionBooks?.chat]) {
+    if (suppliedBook) compatibilityBooks.set(suppliedBook.name, suppliedBook);
+  }
+  function extensionCall(method, args) {
+    return new Promise(function (resolve, reject) {
+      var id = ++extensionCallSequence;
+      var timer = setTimeout(function () {
+        extensionCalls.delete(id);
+        reject(new Error('扩展宿主操作超时'));
+      }, 8000);
+      extensionCalls.set(id, function (error, value) {
+        clearTimeout(timer);
+        extensionCalls.delete(id);
+        if (error) reject(new Error(error)); else resolve(value);
+      });
+      post({ tt: 'extension-call', id: id, method: method, args: args });
+    });
+  }
+
+  function saveExtensionMetadata() {
+    if (!hostExtensions.length) return Promise.resolve();
+    var metadata = { ...core.chatMetadata };
+    delete metadata.variables;
+    return extensionCall('save-metadata', metadata);
+  }
+
+  function setCompatibilityBook(book, character) {
+    compatibilityBooks.set(book.name, book);
+    core.setExtensionWorldbook(book, character);
+    if (!character) core.chatMetadata.world_info = book.name;
+  }
+
+  async function editCompatibilityBook(name, action, args) {
+    var edited = await extensionCall('edit-worldbook', { ...args, name: name, action: action });
+    if (action !== 'get-field') setCompatibilityBook(edited.book, edited.character);
+    return edited.pipe;
+  }
+
+  async function worldbookCommand(name, named, text) {
+    if (name === 'getcharbook') return core.getCharWorldbookNames().primary || '';
+    if (name === 'getchatbook') {
+      var bound = core.getChatWorldbookName();
+      if (bound || named.create === 'false' || named.create === '0') return bound || '';
+      var created = await extensionCall('create-chat-worldbook', named.name || text);
+      setCompatibilityBook(created, false);
+      await saveExtensionMetadata();
+      return created.name;
+    }
+    var action = { createentry: 'create-entry', setentryfield: 'set-field', getentryfield: 'get-field' }[name];
+    return editCompatibilityBook(named.file || core.getChatWorldbookName(), action,
+      { uid: named.uid, field: named.field, key: named.key, text: text });
+  }
+
+  async function executeExtensionCommands(text) {
+    try {
+      if (!hostExtensions.length) return { pipe: core.slashCommand(text), isError: false, interrupt: false };
+      var commands = await extensionCall('parse-slash', String(text || ''));
+      var pipe = '';
+      for (var command of commands) {
+        var callback = slashCommands.get(command.name);
+        var expand = function (content) { return String(content).replace(/\{\{pipe\}\}/g, function () { return pipe; }); };
+        var named = Object.fromEntries(Object.entries(command.named).map(function ([key, value]) { return [key, expand(value)]; }));
+        var unnamed = command.unnamed.map(expand);
+        if (callback) {
+          pipe = await callback(named, unnamed.length ? unnamed.join(' ') : pipe);
+        } else if (['getcharbook', 'getchatbook', 'createentry', 'setentryfield', 'getentryfield'].includes(command.name)) {
+          pipe = await worldbookCommand(command.name, named, unnamed.length ? unnamed.join(' ') : pipe);
+        } else if (['echo', 'pass', 'run', 'comment', 'sys', 'sendas', 'trigger'].includes(command.name)) {
+          pipe = core.slashCommand(command.raw.replace(/\{\{pipe\}\}/g, function () { return pipe; }));
+        } else {
+          pipe = core.runParsedCommand({ name: command.name, named: named, unnamed: unnamed }, pipe);
+        }
+        pipe = pipe == null ? '' : String(pipe);
+      }
+      return { pipe: pipe, isError: false, interrupt: false };
+    } catch (error) {
+      return { pipe: '', isError: true, interrupt: false, errorMessage: String(error?.message || error) };
+    }
+  }
 
   function characterCardFields() { return core.getCharacterCardFields(); }
 
@@ -893,6 +1053,10 @@
     tagMap: {},
     createCharacterData: {},
     extensionPrompts: extensionPrompts,
+    extension_prompt_types: extensionPromptTypes,
+    extension_prompt_roles: extensionPromptRoles,
+    extensionNames: hostExtensions.map(function (item) { return 'third-party/' + item.slug; }),
+    extensionTypes: Object.fromEntries(hostExtensions.map(function (item) { return ['third-party/' + item.slug, 'local']; })),
     chatCompletionSettings: { openai_model: 'dsh', chat_completion_source: 'dsh', temperature: 1, openai_max_tokens: 8000 },
     textCompletionSettings: {},
     powerUserSettings: {},
@@ -913,13 +1077,16 @@
     eventTypes: TAVERN_EVENTS,
     getCurrentChatId: function () { return core.chatId; },
     getRequestHeaders: function () { return Object.assign({}, headers); },
-    saveChat: function () { post({ tt: 'save' }); return Promise.resolve(); },
+    saveChat: function () { post({ tt: 'save' }); return saveExtensionMetadata(); },
     saveSettingsDebounced: function () { post({ tt: 'settings', value: JSON.parse(JSON.stringify(core.extensionSettings)) }); return Promise.resolve(); },
-    saveMetadata: function () { return Promise.resolve(); },
+    saveMetadata: saveExtensionMetadata,
     getCharacterCardFields: characterCardFields,
     getCharacters: function () { return Promise.resolve(core.characters); },
-    loadWorldInfo: function (name) { return Promise.resolve(core.getWorldbook(name)); },
-    saveWorldInfo: function () { throw new Error('DSH TH 宿主：世界书写入未接通'); },
+    loadWorldInfo: function (name) { return Promise.resolve(structuredClone(compatibilityBooks.get(name) || core.getWorldbook(name))); },
+    saveWorldInfo: function (name, data) {
+      if (!hostExtensions.length) throw new Error('DSH TH 宿主：世界书写入未接通');
+      return editCompatibilityBook(name, 'replace', { data: data });
+    },
     reloadWorldInfoEditor: function () {},
     updateWorldInfoList: function () { return Promise.resolve(); },
     convertCharacterBook: function (book) { return core.getWorldbook(book && book.name); },
@@ -951,7 +1118,7 @@
     unsetExtensionPrompt: function (id) { delete extensionPrompts[id]; return Promise.resolve(); },
     generate: window.generate,
     generateQuietPrompt: function (text) { return window.generate({ user_input: String(text || '') }); },
-    generateRaw: window.generateRaw,
+    generateRaw: stGenerateRaw,
     stopGeneration: window.stopAllGeneration,
     sendSystemMessage: function (type, text) { post({ tt: 'system-message', text: String(text == null ? '' : text), type: type }); return Promise.resolve(); },
     addOneMessage: function (message) {
@@ -962,7 +1129,7 @@
       }]);
     },
     deleteLastMessage: function () { return core.deleteChatMessages([core.getLastMessageId()]); },
-    updateMessageBlock: function (id) { core.touchMessage(id); },
+    updateMessageBlock: function (id) { core.touchMessage(id, true); },
     messageFormatting: function (message) { return textToHtml(applyRegexes(message, 2)); },
     uuidv4: function () {
       return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (ch) {
@@ -976,13 +1143,28 @@
     getTokenCountAsync: function (text) { return Promise.resolve(Math.ceil(String(text || '').length / 3.2)); },
     substituteParams: function (text) { return core.substituteMacros(text); },
     substituteParamsExtended: function (text) { return core.substituteMacros(text); },
-    renderExtensionTemplateAsync: function () { return Promise.resolve(''); },
+    renderExtensionTemplateAsync: async function (extension, template) {
+      var item = findHostExtension(extension);
+      var parts = String(template || '').split('/');
+      if (!item || parts.some(function (part) { return !part || part === '.' || part === '..' || /[\\:]/.test(part); })) {
+        throw new Error('扩展模板路径无效');
+      }
+      var url = item.assetBase + '/' + parts.map(encodeURIComponent).join('/') + '.html';
+      var response = await fetch(url);
+      if (!response.ok) throw new Error('找不到扩展模板（HTTP ' + response.status + '）');
+      return response.text();
+    },
     getPresetManager: function () { return null; },
     showLoader: function () {}, hideLoader: function () { return Promise.resolve(); },
     isMobile: function () { return false; },
     shouldSendOnEnter: function () { return true; },
     timestampToMoment: function (value) { return new Date(value); },
-    executeSlashCommandsWithOptions: function (text) { return Promise.resolve({ pipe: core.slashCommand(text), isError: false, interrupt: false }); },
+    executeSlashCommandsWithOptions: executeExtensionCommands,
+    SlashCommandParser: slashCommandParser,
+    SlashCommand: slashCommandProps,
+    SlashCommandArgument: slashCommandProps,
+    SlashCommandNamedArgument: slashCommandProps,
+    ARGUMENT_TYPE: { STRING: 'string', NUMBER: 'number', BOOLEAN: 'boolean', LIST: 'list', DICTIONARY: 'dictionary' },
     clearChat: function () { return core.deleteChatMessages(Array.from({ length: core.getLastMessageId() + 1 }, function (_, index) { return index; })); },
     printMessages: function () { return Promise.resolve(); },
     updateChatMetadata: function (values) { Object.assign(core.chatMetadata, values || {}); },
@@ -993,7 +1175,13 @@
     ConnectionManagerRequestService: {},
     registerDataBankScraper: function () { return Promise.resolve(); },
     getThumbnailUrl: function () { return ''; },
-    writeExtensionField: function () { return Promise.resolve(); },
+    writeExtensionField: async function (characterId, key, value) {
+      var character = core.characters[Number(characterId)];
+      if (!hostExtensions.length || !character) throw new Error('找不到扩展正在操作的角色卡');
+      await extensionCall('write-card-extension', { key: key, value: value });
+      var fields = character.data.extensions ||= {};
+      if (value == null) delete fields[key]; else fields[key] = structuredClone(value);
+    },
     unshallowCharacter: function () { return Promise.resolve(); },
     getTextGenServer: function () { return ''; },
     extractMessageFromData: function (data) { return String(data && data.content || ''); },
@@ -1036,7 +1224,7 @@
     'getLorebooks', 'getLorebookSettings', 'setLorebookSettings', 'getTavernRegexes', 'formatAsTavernRegexedString',
     'isCharacterTavernRegexesEnabled', 'registerMacroLike', 'injectPrompts', 'uninjectPrompts', 'generate',
     'generateRaw', 'getModelList', 'getProxyPresetNames', 'stopGenerationById', 'stopAllGeneration',
-    'getPresetNames', 'getLoadedPresetName', 'getPreset', 'loadPreset', 'getCharacterNames',
+    'getPresetNames', 'getLoadedPresetName', 'getPreset', 'loadPreset', 'replacePreset', 'updatePresetWith', 'getCharacterNames',
     'getCharacterIds', 'getCurrentCharacterName', 'getCurrentCharacterId', 'getCharData', 'getCharAvatarPath',
     'getChatHistoryBrief', 'getChatHistoryDetail', 'getPersonaNames', 'getPersonaIds', 'getCurrentPersonaName',
     'getCurrentPersonaId', 'getPersonaAvatarPath', 'getMessageId', 'errorCatched', 'getScriptId',
@@ -1227,7 +1415,44 @@
     });
   }
 
+  function loadExtensionStyle(url) {
+    return new Promise(function (resolve, reject) {
+      var link = document.createElement('link');
+      link.rel = 'stylesheet';
+      link.href = url;
+      var timeout = setTimeout(function () { reject(new Error('样式加载超时')); }, 10000);
+      link.onload = function () { clearTimeout(timeout); resolve(); };
+      link.onerror = function () { clearTimeout(timeout); reject(new Error('样式加载失败')); };
+      document.head.appendChild(link);
+    });
+  }
+
+  async function runExtensions() {
+    // Load in manifest order. A failed extension must not block card scripts.
+    for (var item of hostExtensions) {
+      var error = '';
+      try {
+        if (item.requires?.length) throw new Error('宿主缺少依赖：' + item.requires.join('、'));
+        if (item.css) await loadExtensionStyle(item.css);
+        if (item.js) {
+          var timer;
+          try {
+            await Promise.race([
+              evaluateModule(new URL(item.js, document.baseURI).href),
+              new Promise(function (_, reject) { timer = setTimeout(function () { reject(new Error('模块启动超时')); }, 15000); }),
+            ]);
+          } finally { clearTimeout(timer); }
+        }
+      } catch (cause) {
+        error = String(cause?.message || cause).slice(0, 400);
+        log('warn', '扩展「' + item.name + '」启动失败：' + error);
+      }
+      post({ tt: 'extension-status', id: item.id, error: error });
+    }
+  }
+
   async function runScripts() {
+    await runExtensions();
     var scripts = Array.isArray(INIT.scripts) ? INIT.scripts : [];
     var modes = scripts.map(function (script) {
       if (!script?.content) return null;
@@ -1271,9 +1496,15 @@
     if (!data || data.__ttParent !== true) return;
     try {
       switch (data.type) {
-        case 'chat':
+        case 'chat': {
+          var previousLength = core.chat.length;
           core.applyChat(data.messages || [], { emitAdded: data.emitAdded !== false });
+          var ended = data.generationEnded ?? core.chat.slice(previousLength).some(function (message) {
+            return !message.is_user && !message.is_system;
+          });
+          if (data.emitAdded !== false && ended) core.bus.emit(TAVERN_EVENTS.GENERATION_ENDED, core.chat.length, 'normal');
           break;
+        }
         case 'emit':
           core.bus.emit.apply(core.bus, [data.event].concat(data.args || []));
           break;
@@ -1291,7 +1522,7 @@
           break;
         case 'collect-prompts':
           eventEmitAndWait(TAVERN_EVENTS.GENERATION_AFTER_COMMANDS, 'normal', {}, false)
-            .then(function () { return promptInjections.collect(); })
+            .then(function () { return promptInjections.collect(collectExtensionPrompts()); })
             .then(function (items) { post({ tt: 'prompt-injections', id: data.id, items: items }); })
             .catch(function (error) {
               scriptError(null, error);
@@ -1306,6 +1537,20 @@
           }
           break;
         }
+        case 'preset-views':
+          presetViews = data.views || {};
+          break;
+        case 'preset-write-result':
+          presetWrites.get(data.id)?.(data.error, data.views);
+          break;
+        case 'extension-call-result':
+          extensionCalls.get(data.id)?.(data.error, data.value);
+          break;
+        case 'extension-run-slash':
+          executeExtensionCommands(data.text).then(function (result) {
+            post({ tt: 'extension-slash-result', id: data.id, result: result });
+          });
+          break;
         case 'settings':
           Object.keys(core.extensionSettings).forEach(function (key) { delete core.extensionSettings[key]; });
           Object.assign(core.extensionSettings, data.value || {});

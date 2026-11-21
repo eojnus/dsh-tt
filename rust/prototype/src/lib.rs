@@ -1,9 +1,14 @@
+mod chat_projection;
 mod display;
+mod extensions;
 mod generation;
 mod lorebook;
 mod message;
 mod png;
+mod preset;
 mod prompt;
+mod slash;
+mod worldbook_edit;
 
 use serde_json::Value;
 
@@ -37,6 +42,85 @@ fn json_output(value: &Value) -> u64 {
     (len << 32) | ptr as u64
 }
 
+fn json_operation(ptr: *const u8, len: usize, operation: impl FnOnce(&Value) -> Option<Value>) -> u64 {
+    let bytes = unsafe { std::slice::from_raw_parts(ptr, len) };
+    let Ok(input) = serde_json::from_slice(bytes) else { return 0 };
+    operation(&input).as_ref().map_or(0, json_output)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn extension_repository(ptr: *const u8, len: usize) -> u64 {
+    json_operation(ptr, len, |input| Some(match extensions::github_repository(input) {
+        Ok(repo) => repo,
+        Err(error) => serde_json::json!({"error": error}),
+    }))
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn index_extension_archive(ptr: *const u8, len: usize) -> u64 {
+    let bytes = unsafe { std::slice::from_raw_parts(ptr, len) };
+    json_output(&match extensions::index_archive(bytes) {
+        Ok(index) => index,
+        Err(error) => serde_json::json!({"error": error}),
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn parse_extension_commands(ptr: *const u8, len: usize) -> u64 {
+    json_operation(ptr, len, |input| {
+        Some(match slash::parse(input.as_str()?) {
+            Ok(parsed) => parsed,
+            Err(error) => serde_json::json!({"error": error}),
+        })
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn edit_extension_worldbook(ptr: *const u8, len: usize) -> u64 {
+    json_operation(ptr, len, |input| Some(match worldbook_edit::apply(input) {
+        Ok(result) => result,
+        Err(error) => serde_json::json!({"error": error}),
+    }))
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn normalize_preset(ptr: *const u8, len: usize) -> u64 {
+    json_operation(ptr, len, |input| Some(preset::normalize(input)))
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn apply_preset_overrides(ptr: *const u8, len: usize) -> u64 {
+    json_operation(ptr, len, |input| Some(preset::apply_overrides(input)))
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn view_script_preset(ptr: *const u8, len: usize) -> u64 {
+    json_operation(ptr, len, |input| Some(preset::script_view(input)))
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn edit_script_preset(ptr: *const u8, len: usize) -> u64 {
+    json_operation(ptr, len, |input| Some(match preset::script_edit(input) {
+        Ok(data) => data,
+        Err(error) => serde_json::json!({"error": error}),
+    }))
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn project_chat_floors(ptr: *const u8, len: usize) -> u64 {
+    json_operation(ptr, len, chat_projection::floor_plan)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn project_live_reply(ptr: *const u8, len: usize) -> u64 {
+    json_operation(ptr, len, chat_projection::live_plan)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn merge_floor_window(ptr: *const u8, len: usize) -> u64 {
+    json_operation(ptr, len, chat_projection::merge_floor_window)
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn layout_message_fences(ptr: *const u8, len: usize) -> u64 {
     let bytes = unsafe { std::slice::from_raw_parts(ptr, len) };
@@ -55,6 +139,7 @@ unsafe extern "C" {
     fn match_lorebook_entry(index: usize) -> i32;
     fn lorebook_random() -> f64;
     fn sort_legacy_lorebook_entries(ptr: *mut u32, len: usize, grouped: u32);
+    fn decorate_chat_source(ptr: *const u8, len: usize) -> u64;
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -191,10 +276,33 @@ pub unsafe extern "C" fn assemble_generation(ptr: *const u8, len: usize) -> u64 
         return 0;
     };
     let output = match generation::assemble(&input) {
-        Ok(messages) => serde_json::json!({"messages": messages}),
+        Ok(messages) => serde_json::json!({"messages": messages, "controls": generation::auxiliary_controls(&input)}),
         Err(message) => serde_json::json!({"error": message}),
     };
     json_output(&output)
+}
+
+#[cfg(target_arch = "wasm32")]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn prepare_chat_templates(ptr: *const u8, len: usize) -> u64 {
+    json_operation(ptr, len, |input| prompt::prepare_chat(input, |source| {
+        let result = unsafe { decorate_chat_source(source.as_ptr(), source.len()) };
+        if result == 0 {
+            return String::new();
+        }
+        let ptr = result as u32 as *mut u8;
+        let len = (result >> 32) as usize;
+        // The callback allocates this UTF-8 buffer through alloc and passes ownership back.
+        let bytes = unsafe { Box::from_raw(std::ptr::slice_from_raw_parts_mut(ptr, len)) };
+        String::from_utf8(bytes.into_vec()).unwrap_or_default()
+    }))
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn assemble_chat_prompt(ptr: *const u8, len: usize) -> u64 {
+    let bytes = unsafe { std::slice::from_raw_parts(ptr, len) };
+    let Ok(input) = serde_json::from_slice(bytes) else { return 0 };
+    generation::assemble_chat(&input).as_ref().map_or(0, json_output)
 }
 
 #[unsafe(no_mangle)]

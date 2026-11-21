@@ -2,7 +2,7 @@
 // v2：跨块 EJS（整段配对）、注入条目也走渲染、记录可诊断的组装轨迹。
 
 import { substitute } from './macros.js';
-import { renderEjs } from './ejs.js';
+import { renderEjs, renderEjsMessages } from './ejs.js';
 import { joinDecorated } from './decorators.js';
 import { cardAssetsWasm } from './card-assets-wasm.js';
 
@@ -14,16 +14,12 @@ export const MARKERS = new Set([
 
 export function parsePreset(json) {
   if (!json || typeof json !== 'object') return null;
-  const prompts = Array.isArray(json.prompts) ? json.prompts : [];
-  const order = Array.isArray(json.prompt_order) && json.prompt_order[0]?.order
-    ? json.prompt_order[0].order
-    : prompts.map((p) => ({ identifier: p.identifier, enabled: true }));
-  return {
-    name: json.name || json.preset_name || '导入的预设',
-    prompts,
-    order,
-    raw: json,
-  };
+  const normalized = cardAssetsWasm().normalizePreset({
+    name: json.name, preset_name: json.preset_name, prompts: json.prompts,
+    order: Array.isArray(json.prompt_order) ? json.prompt_order[0]?.order : null,
+  });
+  if (!normalized) throw new Error('Rust 无法解析预设提示词');
+  return { ...normalized, raw: json };
 }
 
 /**
@@ -33,34 +29,12 @@ export function parsePreset(json) {
  */
 export function applyPresetOverrides(preset, overrides) {
   if (!preset || !overrides || typeof overrides !== 'object') return preset;
-  const promptChanges = new Map();
-  if (Array.isArray(overrides.prompts)) {
-    for (const item of overrides.prompts) {
-      if (item && typeof item.identifier === 'string') promptChanges.set(item.identifier, item);
-    }
-  } else if (overrides.prompts && typeof overrides.prompts === 'object') {
-    for (const [identifier, change] of Object.entries(overrides.prompts)) {
-      if (typeof change === 'boolean' || (change && typeof change === 'object')) promptChanges.set(identifier, change);
-    }
-  }
-
-  const prompts = preset.prompts.map((prompt) => {
-    const change = promptChanges.get(prompt.identifier);
-    if (change === undefined) return prompt;
-    const next = { ...prompt };
-    if (typeof change === 'boolean') next.enabled = change;
-    else {
-      if (typeof change.enabled === 'boolean') next.enabled = change.enabled;
-      if (typeof change.content === 'string') next.content = change.content;
-    }
-    return next;
+  if (!overrides.order?.length && !Object.keys(overrides.prompts ?? {}).length) return preset;
+  const updated = cardAssetsWasm().applyPresetOverrides({
+    prompts: preset.prompts, order: preset.order, overrides,
   });
-
-  const order = Array.isArray(overrides.order) && overrides.order.length
-    ? overrides.order.map((slot) => ({ ...slot }))
-    : preset.order;
-
-  return { ...preset, prompts, order };
+  if (!updated) throw new Error('Rust 无法应用预设覆盖');
+  return { ...preset, ...updated };
 }
 
 function promptByIdentifier(preset, identifier) {
@@ -70,27 +44,32 @@ function promptByIdentifier(preset, identifier) {
 const BUILTINS = ['worldInfoBefore', 'main', 'worldInfoAfter', 'charDescription', 'charPersonality',
   'scenario', 'personaDescription', 'nsfw', 'jailbreak'];
 
-function planWithRust(preset, wasm) {
-  if (!wasm?.planMainPrompt) return null;
+function presetLayoutInput(preset) {
   const prompts = preset?.prompts ?? [];
   const order = Array.isArray(preset?.order) ? preset.order : [];
   const ordinary = (value) => value == null || ['number', 'string', 'boolean'].includes(typeof value);
   if (!Array.isArray(prompts) || prompts.some((prompt) => typeof prompt?.identifier !== 'string'
     || !ordinary(prompt.injection_position)) || order.some((slot) => typeof slot?.identifier !== 'string')) return null;
-  return wasm.planMainPrompt({
+  return {
     prompts: prompts.map((prompt) => [prompt.identifier, prompt.enabled !== false, Boolean(prompt.content), Number(prompt.injection_position) === 1]),
     order: order.map((slot) => [slot.identifier, slot.enabled !== false]),
-  });
+  };
+}
+
+function planWithRust(preset, wasm) {
+  const input = presetLayoutInput(preset);
+  return input && wasm?.planMainPrompt?.(input);
 }
 
 function markerEnabled(marker, preset) {
   if (marker === 'personaDescription') return true;
+  const slot = Array.isArray(preset?.order) ? preset.order.find((entry) => entry?.identifier === marker) : null;
+  if (slot?.enabled === false) return false;
   if (marker === 'nsfw' || marker === 'jailbreak') {
     const prompt = promptByIdentifier(preset, marker);
     return Boolean(prompt && prompt.enabled !== false);
   }
-  const slot = Array.isArray(preset?.order) ? preset.order.find((entry) => entry.identifier === marker) : null;
-  return slot?.enabled !== false && promptByIdentifier(preset, marker)?.enabled !== false;
+  return promptByIdentifier(preset, marker)?.enabled !== false;
 }
 
 function markerContent(marker, { card, lorebook, persona, preset, decorate }) {
@@ -123,13 +102,14 @@ function markerContent(marker, { card, lorebook, persona, preset, decorate }) {
  *   trace: { parts: {label:string, chars:number, rendered:number}[], depth: number, injected: number, preset: string|null }
  * }}
  */
-export function renderPrompt({ card, preset, lorebook, persona, env, macroOptions, ejsScope = {}, wasm = cardAssetsWasm() }) {
+export function renderPrompt({ card, preset, lorebook, persona, env, macroOptions, ejsScope = {}, wasm = cardAssetsWasm(), nativeChat = false }) {
   const parts = [];
-  const injectedRaw = [];
+  let injectedRaw = [];
   const trace = { parts: [], depth: 0, injected: 0, preset: preset?.name ?? null };
 
   // ① EJS → ② ST 宏（顺序与 ST-Prompt-Template 一致）
-  const render = (text) => substitute(renderEjs(String(text ?? ''), ejsScope), env, macroOptions);
+  const options = nativeChat ? { ...macroOptions, variableStore: Object.assign(Object.create(null), env?.__vars) } : macroOptions;
+  const render = (text) => substitute(renderEjs(String(text ?? ''), ejsScope), env, options);
 
   // 先收集原文，最后整段渲染：EJS 允许跨块配对（<% 在此、%> 在彼）
   const push = (text, label) => {
@@ -146,7 +126,7 @@ export function renderPrompt({ card, preset, lorebook, persona, env, macroOption
     const isAbsolute = absolute ?? Number(prompt.injection_position) === 1;
     if (isAbsolute) {
       const depth = Number(prompt.injection_depth) || 0;
-      injectedRaw.push({ role: prompt.role || 'system', content, depth, label: prompt.name || prompt.identifier || 'inject' });
+      injectedRaw.push({ role: chatRole(prompt.role), content, depth, order: Number(prompt.injection_order ?? 100) || 0 });
       return;
     }
     push(content, prompt.name || prompt.identifier || 'prompt');
@@ -154,35 +134,55 @@ export function renderPrompt({ card, preset, lorebook, persona, env, macroOption
 
   // ST 的固定内置段（§14.3）：无论 prompt_order 是否列出，都按这个顺序在前。
   // prompt_order 只决定"用户 prompt"部分的顺序。
-  const plan = planWithRust(preset, wasm);
   const decorate = (list) => joinDecorated(list, ejsScope, '\n');
-  for (const marker of plan?.markers ?? BUILTINS) {
-    if (!plan && !markerEnabled(marker, preset)) continue;
-    push(markerContent(marker, { card, lorebook, persona, preset, decorate }), `marker:${marker}`);
-  }
-
-  if (plan) {
-    for (const [index, absolute] of plan.ordered) consumePrompt(preset.prompts[index], absolute);
-  } else if (Array.isArray(preset?.order)) {
-    for (const slot of preset.order) {
-      if (!slot || slot.enabled === false) continue;
-      const identifier = slot.identifier;
-      // 内置段已在前面处理；marker 只表示位置，不重复消费。
-      if (MARKERS.has(identifier)) continue;
-      consumePrompt(promptByIdentifier(preset, identifier));
-    }
-  }
-
-  // 卡自带的 system_prompt 追加在预设之后；depth_prompt 只进深度桶，不再重复进 system。
-  push(card?.systemPrompt, 'card:systemPrompt');
-
-  const system = render(parts.join('\n\n')).trim();
-
   const tailPartsRaw = [];
   for (const item of lorebook?.buckets?.ANTop ?? []) tailPartsRaw.push(item);
   for (const item of lorebook?.buckets?.ANBottom ?? []) tailPartsRaw.push(item);
-  if (card?.postHistoryInstructions) tailPartsRaw.push(card.postHistoryInstructions);
-  const tail = render(joinDecorated(tailPartsRaw, ejsScope, '\n\n')).trim();
+  let sequence = null;
+  if (nativeChat) {
+    const worldInfoSources = {
+      worldInfoBefore: () => decorate(lorebook?.buckets?.before),
+      worldInfoAfter: () => decorate(lorebook?.buckets?.after),
+      authorsNote: () => joinDecorated(tailPartsRaw, ejsScope, '\n\n'),
+    };
+    const compiled = wasm?.prepareChatTemplates?.({
+      prompts: preset?.prompts ?? [], order: preset?.order ?? [], prefix: preset?.raw?.assistant_prefill,
+      overrides: { main: card?.systemPrompt, jailbreak: card?.postHistoryInstructions },
+      builtins: { charDescription: card?.description, charPersonality: card?.personality,
+        scenario: card?.scenario, personaDescription: persona?.description },
+    }, (source) => worldInfoSources[source]());
+    if (!compiled) throw new Error('无法运行 Rust 对话提示词编排');
+    const { groups } = compiled;
+    trace.parts = compiled.trace;
+    injectedRaw = compiled.injected;
+    const sections = renderEjsMessages(groups.flatMap(({ content }) => content === undefined ? [] : [content]), ejsScope);
+    let renderedIndex = 0;
+    sequence = groups.flatMap((group) => {
+      if (typeof group.history === 'boolean') return [{ history: group.history }];
+      const output = substitute(sections[renderedIndex++], env, options);
+      if (!output.trim()) return [];
+      return [{ role: group.role, content: group.prefix ? output : output.trim() }];
+    });
+  } else {
+    const plan = planWithRust(preset, wasm);
+    for (const marker of plan?.markers ?? BUILTINS) {
+      if (!plan && !markerEnabled(marker, preset)) continue;
+      push(markerContent(marker, { card, lorebook, persona, preset, decorate }), `marker:${marker}`);
+    }
+    if (plan) {
+      for (const [index, absolute] of plan.ordered) consumePrompt(preset.prompts[index], absolute);
+    } else {
+      for (const slot of preset?.order ?? []) {
+        if (slot && slot.enabled !== false && !MARKERS.has(slot.identifier)) consumePrompt(promptByIdentifier(preset, slot.identifier));
+      }
+    }
+    push(card?.systemPrompt, 'card:systemPrompt');
+    if (card?.postHistoryInstructions) tailPartsRaw.push(card.postHistoryInstructions);
+  }
+  const historyIndex = sequence?.findIndex((item) => Object.hasOwn(item, 'history'));
+  const flatten = (items) => items.map(({ content }) => content).filter(Boolean).join('\n\n');
+  const system = sequence ? flatten(sequence.slice(0, historyIndex)) : render(parts.join('\n\n')).trim();
+  const tail = sequence ? flatten(sequence.slice(historyIndex + 1)) : render(joinDecorated(tailPartsRaw, ejsScope, '\n\n')).trim();
 
   const depth = [];
   for (const group of lorebook?.buckets?.depth ?? []) {
@@ -198,10 +198,14 @@ export function renderPrompt({ card, preset, lorebook, persona, env, macroOption
   const injected = [];
   for (const item of injectedRaw) {
     const content = render(item.content).trim();
-    if (content) injected.push({ role: item.role, content, depth: item.depth });
+    if (content) injected.push({ role: item.role, content, depth: item.depth, ...(nativeChat && { order: item.order }) });
   }
 
   trace.depth = depth.length;
   trace.injected = injected.length;
-  return { system, tail, depth, injected, trace };
+  return { system, tail, depth, injected, trace, sequence };
+}
+
+function chatRole(role) {
+  return role === 'assistant' || role === 'user' ? role : 'system';
 }

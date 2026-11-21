@@ -6,7 +6,7 @@ export function createCardLengthPrototype(bytes) {
   try {
     const instance = new WebAssembly.Instance(new WebAssembly.Module(bytes), { dsh_tt: {
       start_lorebook_round() {}, match_lorebook_entry: () => 0, lorebook_random: () => 1,
-      sort_legacy_lorebook_entries() {},
+      sort_legacy_lorebook_entries() {}, decorate_chat_source: () => 0n,
     } });
     wasm = instance.exports;
     if (!(wasm.memory instanceof WebAssembly.Memory) ||

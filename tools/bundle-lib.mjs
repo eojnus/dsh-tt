@@ -18,7 +18,7 @@ const LIB = path.join(projectRoot, 'plugin', 'lib');
 
 /** 打包顺序即定义顺序（__require 会按需解析，顺序只影响可读性）。 */
 export const MODULES = [
-  'ejs', 'macros', 'decorators', 'lorebook', 'regex', 'prompt', 'pipeline',
+  'ejs', 'macros', 'decorators', 'lorebook', 'regex', 'prompt', 'tavern-preset', 'pipeline',
   'card-assets-wasm-bytes', 'card-assets-wasm', 'card', 'png',
   'message-html', 'chat-wire',
 ];

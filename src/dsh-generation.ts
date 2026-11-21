@@ -95,7 +95,7 @@ export async function handleAuxiliaryGeneration(host: Host, request: Request) {
   const cancel = new AbortController();
   const signal = AbortSignal.any([request.signal, cancel.signal, AbortSignal.timeout(5 * 60_000)]);
   const modelRequest = {
-    ...selection, sessionId: input.sessionId, signal, purpose: 'dsh-tt-auxiliary',
+    ...selection, ...plan.controls, sessionId: input.sessionId, signal, purpose: 'dsh-tt-auxiliary',
     messages: plan.messages.map((message: Prompt) => modelMessage(message, selection)),
   };
   const frames = modelFrames(host, modelRequest, signal);

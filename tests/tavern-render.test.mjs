@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import { stripTypeScriptTypes } from 'node:module';
 import { loadBundledLib } from '../tools/bundle-lib.mjs';
+import { cardAssetsWasm } from '../plugin/lib/card-assets-wasm.js';
 import { assistantProse, buildMessageFrame, fenceDisplayFragment, hideAssistantControlBlocks, literalAssetDisplays, splitMessageBlocks, streamingAssistantProse, vendorScript } from '../plugin/lib/message-html.js';
 
 async function runHostedScripts(scripts, init = {}, options = {}) {
@@ -87,6 +88,67 @@ test('酒馆助手：MVU 能遍历世界书绑定、异步读取 InitVar 并写�
   assert.equal(context.getLorebookSettings().selected_global_lorebooks.length, 0);
 });
 
+test('独立扩展能注册异步命令、写聊天世界书和元数据，并调用 ST 原始生成', async () => {
+  const calls = [];
+  const wasm = cardAssetsWasm();
+  let book;
+  let raw;
+  const { context, ready } = await runHostedScripts([{
+    id: 'extension-probe',
+    content: `$(async () => {
+      const c = SillyTavern.getContext();
+      c.SlashCommandParser.addCommandObject(c.SlashCommand.fromProps({
+        name: 'mirror', callback: async (_args, value) => value,
+      }));
+      window.bookName = (await c.executeSlashCommandsWithOptions('/getchatbook create=true name="测试世界书"')).pipe;
+      window.uid = (await c.executeSlashCommandsWithOptions('/createentry file="测试世界书" key="记录"')).pipe;
+      window.written = await c.executeSlashCommandsWithOptions('/mirror "保留 | 竖线" | /setentryfield file="测试世界书" uid='+uid+' field=content');
+      window.currentBook = await c.loadWorldInfo(bookName);
+      c.chatMetadata.bookmark = 8;
+      await c.saveMetadata();
+      await c.writeExtensionField(0, 'Sample', { enabled: true });
+      const messages = [{role:'user', content:'只传这条'}];
+      c.eventSource.on(c.eventTypes.CHAT_COMPLETION_SETTINGS_READY, data => {
+        if (data.messages.includes(messages[0])) data.temperature = 0.25;
+      });
+      window.reply = await c.generateRaw({ prompt: messages, responseLength: 120 });
+    });`,
+  }], {
+    extensions: [{ id: 'sample', slug: 'sample', name: '样例', requires: [] }],
+    messages: [{ role: 'assistant', text: '已有聊天' }],
+  }, {
+    onPost(data, reply) {
+      if (data.tt === 'extension-call') {
+        calls.push(data);
+        let value;
+        if (data.method === 'parse-slash') value = wasm.parseExtensionCommands(data.args).commands;
+        if (data.method === 'create-chat-worldbook') value = book = { name: data.args, entries: {} };
+        if (data.method === 'edit-worldbook') {
+          value = wasm.editExtensionWorldbook({ ...data.args, book });
+          book = value.book;
+        }
+        reply({ type: 'extension-call-result', id: data.id, value });
+      }
+      if (data.tt === 'generate') {
+        raw = data;
+        reply({ type: 'generation-frame', id: data.id, frame: { type: 'text', text: '完成' } });
+        reply({ type: 'generation-frame', id: data.id, frame: { type: 'done' } });
+      }
+    },
+  });
+  assert.equal(ready.errors, 0);
+  assert.equal(context.bookName, '测试世界书');
+  assert.equal(context.written.isError, false);
+  assert.equal(context.currentBook.entries[context.uid].content, '保留 | 竖线');
+  assert.ok(calls.some(({ method, args }) => method === 'save-metadata' && args.bookmark === 8));
+  assert.ok(calls.some(({ method, args }) => method === 'write-card-extension' && args.key === 'Sample'));
+  assert.equal(context.reply, '完成');
+  assert.equal(raw.history.length, 0);
+  assert.equal(raw.options.prompt[0].content, '只传这条');
+  assert.equal(raw.options.temperature, 0.25);
+  assert.equal(raw.options.max_tokens, 120);
+});
+
 test('酒馆助手：辅助生成按深度清理历史，回传增量，脚本注入可只执行一次', async () => {
   const requests = [];
   const { context, ready } = await runHostedScripts([{
@@ -159,6 +221,32 @@ test('酒馆助手：显示和提示词正则按文本来源、用途及深度�
   });
   assert.equal(ready.errors, 0);
   assert.deepEqual(Array.from(context.results), ['显示', '提示词', 'X', 'X', '显示']);
+});
+
+test('酒馆助手：同步读取当前预设，并等待提示词写入确认', async () => {
+  const view = { prompts: [{ id: 'p', enabled: false }], prompts_unused: [] };
+  const { context, ready } = await runHostedScripts([{
+    id: 'preset-test',
+    content: `$(async () => {
+      const current = getPreset('in_use');
+      current.prompts[0].enabled = true;
+      window.before = getPreset('in_use').prompts[0].enabled;
+      await TavernHelper.replacePreset('in_use', current);
+      window.after = getPreset('in_use').prompts[0].enabled;
+      window.saved = getPreset('测试预设').prompts[0].enabled;
+    });`,
+  }], { presetName: '测试预设', presetViews: { active: view, saved: view } }, {
+    onPost(data, reply) {
+      if (data.tt === 'preset-write') {
+        assert.equal(data.name, 'in_use');
+        reply({ type: 'preset-write-result', id: data.id, views: { active: data.preset, saved: view } });
+      }
+    },
+  });
+  assert.equal(ready.errors, 0);
+  assert.equal(context.before, false);
+  assert.equal(context.after, true);
+  assert.equal(context.saved, false);
 });
 
 test('酒馆助手：能通过本局世界书名称读取独立条目', async () => {

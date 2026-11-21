@@ -8,6 +8,7 @@ import { applyWorldInfoDecorators } from '../plugin/lib/decorators.js';
 import { createMacroEnv } from '../plugin/lib/macros.js';
 import { createEjsScope } from '../plugin/lib/ejs.js';
 import { renderPrompt, parsePreset, applyPresetOverrides, MARKERS } from '../plugin/lib/prompt.js';
+import { tavernPresetPromptEdit, tavernPresetView } from '../plugin/lib/tavern-preset.js';
 
 function build({ variables = { 天气: '雨' }, presetJson = presetFixture() } = {}) {
   const card = normalizeCard(cardFixture());
@@ -45,6 +46,73 @@ test('固定内置段顺序在用户 prompt 之前', () => {
   assert.ok(before < main, 'worldInfoBefore 在 main 之前');
   assert.ok(main < after, 'worldInfoAfter 在 main 之后');
   assert.ok(after < description, 'charDescription 在 worldInfoAfter 之后');
+});
+
+test('预设开关同步 disabled 顺序槽，并把刚启用的未放置提示词加入请求', () => {
+  const raw = { prompts: [
+    { identifier: 'in-order', content: '顺序段', enabled: false },
+    { identifier: 'unused', content: '额外段', enabled: false },
+    { identifier: 'jailbreak', content: '后置设置', enabled: true },
+  ], prompt_order: [{ order: [
+    { identifier: 'in-order', enabled: false }, { identifier: 'jailbreak', enabled: false },
+  ] }] };
+  const preset = parsePreset(raw);
+  assert.doesNotMatch(renderPrompt({ preset, env: {} }).system, /顺序段|额外段|后置设置/);
+  const enabled = applyPresetOverrides(preset, { prompts: { 'in-order': true, unused: true, jailbreak: true } });
+  assert.equal(renderPrompt({ preset: enabled, env: {} }).system, '后置设置\n\n顺序段\n\n额外段');
+  assert.equal(raw.prompt_order[0].order[0].enabled, false);
+});
+
+test('酒馆助手能编辑当前预设的提示词顺序及内容，并保留原本的设置和其他顺序组', () => {
+  const raw = { prompts: [
+    { identifier: 'placed', content: '正文', enabled: true, injection_position: 1, injection_depth: 2 },
+    { identifier: 'unused', content: '备用', enabled: true },
+  ], prompt_order: [{ character_id: 7, order: [{ identifier: 'placed', enabled: false }] }, { character_id: 9, order: [] }],
+  extensions: { custom: { name: 'setting' } }, temp_openai: 0.6 };
+  const view = tavernPresetView(raw);
+  assert.equal(view.prompts[0].enabled, false);
+  assert.equal(view.prompts_unused[0].id, 'unused');
+  view.prompts[0].enabled = true;
+  view.prompts[0].content = '<%= getvar("测试") %>';
+  view.prompts.push(view.prompts_unused.shift());
+  const edited = { ...raw, ...tavernPresetPromptEdit(raw, view) };
+  assert.deepEqual(edited.prompt_order[0], { character_id: 7, order: [
+    { identifier: 'placed', enabled: true }, { identifier: 'unused', enabled: true },
+  ] });
+  assert.equal(edited.prompt_order[1], raw.prompt_order[1]);
+  assert.equal(edited.extensions, raw.extensions);
+  assert.equal(edited.temp_openai, 0.6);
+  const result = renderPrompt({ preset: parsePreset(edited), env: {}, ejsScope: createEjsScope({ 测试: '变量已展开' }) });
+  assert.equal(result.system, '备用');
+  assert.equal(result.injected[0].content, '变量已展开');
+  assert.equal(result.injected[0].depth, 2);
+});
+
+test('Rust 预设往返保留不认识的字段并拒绝重复 ID，角色卡只覆盖允许覆盖的内置段', () => {
+  const raw = {
+    prompts: [false, { identifier: 'main', content: '预设原文', extra: { untouched: ['🌙'] }, forbid_overrides: true },
+      { identifier: 'jailbreak', content: '预设的历史后段' }, { identifier: 'relative', content: '初始值' }],
+    prompt_order: [{ order: [null, { identifier: 'main' }, { identifier: 'chatHistory' }, { identifier: 'jailbreak' }] }],
+  };
+  const preset = applyPresetOverrides(parsePreset(raw), { prompts: [
+    { identifier: 'relative', enabled: true, content: '覆盖正文' },
+  ] });
+  assert.equal(preset.raw, raw);
+  assert.equal(preset.order.at(-1).identifier, 'relative');
+  const view = tavernPresetView(raw);
+  view.prompts.push(view.prompts[0]);
+  assert.throws(() => tavernPresetPromptEdit(raw, view), /ID 为空或重复/);
+  view.prompts.pop();
+  const edited = tavernPresetPromptEdit(raw, view);
+  assert.deepEqual(edited.prompts[0].extra, { untouched: ['🌙'] });
+  assert.equal(edited.prompts[0].forbid_overrides, true);
+  const result = renderPrompt({ preset, nativeChat: true, env: {}, card: {
+    systemPrompt: '卡片想覆盖 main', postHistoryInstructions: '后置：{{ORIGINAL}}，再追加',
+  } });
+  assert.deepEqual(result.sequence, [
+    { role: 'system', content: '预设原文' }, { history: true },
+    { role: 'system', content: '后置：预设的历史后段，再追加\n\n覆盖正文' },
+  ]);
 });
 
 test('prompt_order：启用的用户段按顺序、禁用段不出现', () => {

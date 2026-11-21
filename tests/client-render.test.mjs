@@ -236,8 +236,11 @@ test('新局渲染卡片主页，可从主页进入同一局的备选剧情', as
   raw.data.alternate_greetings = ['剧情开场甲', '剧情开场乙'];
   raw.data.extensions.regex_scripts = [{
     placement: [2], markdownOnly: true, findRegex: '【主页】',
-    replaceString: '```html\n<body><main id="card-home">卡片主页</main></body>\n```',
+    replaceString: '```html\n<body><main id="card-home">卡片主页</main><script>window.parent.DreamRpg;</script></body>\n```',
   }];
+  raw.data.extensions.tavern_helper = { scripts: [
+    { id: 'rpg', type: 'script', name: '梦境 RPG', content: 'window.parent.DreamRpg = {};', enabled: true },
+  ] };
   const card = { id: 'card-1', name: '测试角色', filePath: 'card.json' };
   const states = new Map();
   const refs = [];
@@ -345,6 +348,7 @@ test('新局渲染卡片主页，可从主页进入同一局的备选剧情', as
     const chat = render();
     assert.doesNotMatch(collectText(chat), /选择开场白/);
     assert.match(findTags(chat, 'iframe')[0].props.srcDoc, /id="card-home"/);
+    assert.equal(findTags(chat, 'iframe')[0].props.sandbox, 'allow-scripts allow-same-origin');
 
     clickButton(chat, '开始剧情');
     history = [{ type: 'event', event: { type: 'user/message' } }];
@@ -421,7 +425,7 @@ test('新局渲染卡片主页，可从主页进入同一局的备选剧情', as
     assert.doesNotMatch(collectText(streamRow), /内部状态|dream_plot|UpdateVariable/);
     const finalReply = { type: 'event', event: { type: 'assistant/message', surfaceOp: 'append', seq: 3,
       data: { turn: 1, step: 1, message: { content: [
-        { type: 'reasoning', text: '单独的思考文本' }, { type: 'text', text: '<dream_plot>完成的故事</dream_plot>' },
+        { type: 'reasoning', text: '单独的思考文本' }, { type: 'text', text: '<dream_plot>完成的故事</dream_plot>\n```html\n<script>window.parent.DreamRpg;</script>\n```' },
       ] } } } };
     const completed = await publishLive([earlier, thought, partial, finalReply], false);
     assert.doesNotMatch(collectText(completed), /正在写的故事|生成中/);
@@ -430,6 +434,11 @@ test('新局渲染卡片主页，可从主页进入同一局的备选剧情', as
     assert.equal(collectText(completed).match(/已提交的输入/g).length, 1);
     const finalRow = findTags(completed, 'article').find((item) => collectText(item).includes('完成的故事'));
     assert.equal(finalRow.props.key, streamRow.props.key);
+    assert.equal(findTags(finalRow, 'iframe')[0].props.sandbox, 'allow-scripts');
+    const composer = findTags(completed, 'textarea')[0];
+    assert.equal(composer.props.id, 'send_textarea');
+    composer.props.onInput({ nativeEvent: { isTrusted: false }, currentTarget: { value: 'RPG 行动' } });
+    assert.equal(textarea().props.value, 'RPG 行动');
     cleanupFeed();
     cleanupFeed = null;
     assert.equal(feedListeners.size, 0);

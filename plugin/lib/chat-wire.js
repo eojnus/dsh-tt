@@ -1,3 +1,5 @@
+import { cardAssetsWasm } from './card-assets-wasm.js';
+
 const MARK = '\u0000TT\u0000';
 
 export function packChatInput(text, binding) {
@@ -16,33 +18,36 @@ function extractContent(event) {
   return data.content ?? data.message?.content ?? data.text;
 }
 
-function replyKey(event) {
-  const { turn, step } = event.data || {};
-  return Number.isInteger(turn) && Number.isInteger(step) ? `reply-${turn}-${step}` : undefined;
-}
-
 export function toChatFloors(records) {
-  const floors = [];
+  const packets = [];
   for (const record of records || []) {
     const event = record?.event ?? record;
     if (event?.type !== 'user/message' && event?.type !== 'assistant/message') continue;
-    const user = event.type === 'user/message';
     const content = extractContent(event);
-    const text = Array.isArray(content) ? content.map((block) => {
-      if (typeof block === 'string') return block;
-      return (block?.type == null || block.type === 'text') && typeof block?.text === 'string' ? block.text : '';
-    }).join('') : typeof content === 'string' ? content : '';
+    const blocks = Array.isArray(content) ? content : typeof content === 'string' ? [content] : [];
+    packets.push({ event, blocks });
+  }
+  const plan = cardAssetsWasm().projectChatFloors(packets.map(({ event, blocks }) => ({
+    kind: event.type, append: event.surfaceOp === 'append',
+    turn: event.data?.turn, step: event.data?.step,
+    source: (event.data?.source ?? event.data?.message?.source ?? event.source)?.kind,
+    blocks: blocks.map((block) => typeof block === 'string' ? 'text'
+      : typeof block?.text === 'string' ? block.type ?? 'text' : null),
+  })));
+  if (!plan) throw new Error('Rust 无法读取聊天楼层');
+  const floors = [];
+  for (const item of plan) {
+    const { event, blocks } = packets[item.index];
+    const blockText = (index) => typeof blocks[index] === 'string' ? blocks[index] : blocks[index].text;
+    const text = item.text.map(blockText).join('');
     const body = splitChatInput(text)?.body ?? text;
     if (!body) continue;
-    const reasoning = !user && Array.isArray(content)
-      ? content.filter((block) => block?.type === 'reasoning' && typeof block.text === 'string').map((block) => block.text).join('\n\n')
-      : '';
     floors.push({
       id: `${event.seq ?? floors.length}-${event.type}`,
-      role: user ? 'user' : 'assistant',
+      role: item.role,
       text: body,
-      reasoning,
-      replyKey: !user && event.surfaceOp === 'append' ? replyKey(event) : undefined,
+      reasoning: item.reasoning.map(blockText).join('\n\n'),
+      replyKey: item.replyKey ?? undefined,
       seq: event.seq ?? 0,
       time: event.time ?? event.data?.time ?? null,
     });
@@ -51,25 +56,29 @@ export function toChatFloors(records) {
 }
 
 export function liveAssistantReply(entries) {
-  let reply = null;
-  const text = [];
-  const reasoning = [];
+  const packets = [];
+  const chunks = [];
   for (const entry of entries) {
-    const event = entry.event ?? entry;
-    if (!event) continue;
-    if (event.type === 'assistant/live-chunk') {
-      const { attemptId, chunk } = event.data;
-      if (!reply || reply.attemptId !== attemptId) {
-        reply = { attemptId, key: replyKey(event) || `live-${attemptId}`, time: event.time };
-        text.length = 0;
-        reasoning.length = 0;
-      }
-      if (chunk.type === 'text-delta') text.push(chunk.text);
-      else if (chunk.type === 'reasoning-delta') reasoning.push(chunk.text);
-    } else if (reply && reply.key === replyKey(event) && (event.type === 'assistant/message'
-      || event.type === 'assistant/attempt' || event.type === 'step/end')) {
-      reply = null;
-    }
+    const event = entry?.event ?? entry;
+    const kind = event?.type;
+    if (kind !== 'assistant/live-chunk' && kind !== 'assistant/message' && kind !== 'assistant/attempt' && kind !== 'step/end') continue;
+    const data = event.data;
+    packets.push({ kind, turn: data?.turn, step: data?.step, attemptId: data?.attemptId, chunk: data?.chunk?.type });
+    chunks.push(event);
   }
-  return reply && (text.length || reasoning.length) ? { ...reply, text: text.join(''), reasoning: reasoning.join('') } : null;
+  const plan = cardAssetsWasm().projectLiveReply(packets);
+  if (!plan) return null;
+  const first = chunks[plan.index];
+  const textAt = (index) => chunks[index].data?.chunk?.text;
+  return { attemptId: first.data?.attemptId, key: plan.replyKey || `live-${first.data?.attemptId}`, time: first.time,
+    text: plan.text.map(textAt).join(''), reasoning: plan.reasoning.map(textAt).join('') };
+}
+
+export function mergeChatFloors(history, recent, limit) {
+  if (!recent.length) return history;
+  const indices = cardAssetsWasm().mergeFloorWindow({
+    history: history.map((floor) => Number(floor.seq)), recent: recent.map((floor) => Number(floor.seq)), limit,
+  });
+  if (!indices) throw new Error('Rust 无法合并聊天楼层');
+  return indices.map((index) => index < history.length ? history[index] : recent[index - history.length]);
 }

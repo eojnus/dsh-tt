@@ -5,10 +5,18 @@
 // 以便声明 systemPrompt 注入。
 
 import { GENERATION_PATH, handleAuxiliaryGeneration } from './lib/dsh-generation.js';
+import { mountRoleplayStream } from './lib/roleplay-stream.js';
+import { mountExtensionManager } from './lib/dsh-extensions.js';
+import { join } from 'node:path';
 
 export const name = 'dsh-tt-roleplay';
 
 export function apply(ctx) {
+  ctx.inject(['connection', 'profileContext'], (scope) => {
+    const serveAssets = mountExtensionManager((route) => scope.connection.fetch.register(route), join(scope.profileContext.dir, 'dsh-tt-extensions'));
+    scope.on('connection/request', serveAssets);
+  });
+  ctx.inject(['llm'], mountRoleplayStream);
   ctx.inject(['connection', 'llm', 'sessionController'], (scope) => {
     scope.connection.fetch.register({
       path: GENERATION_PATH, methods: ['POST'], requestBody: 'streaming',

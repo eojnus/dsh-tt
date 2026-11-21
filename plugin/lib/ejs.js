@@ -620,8 +620,9 @@ function stripTags(source) {
  * 把模板编译成函数。返回 `null` 表示模板里没有 EJS 标记。
  * @param {string} source
  */
-function compileTemplate(source) {
-  if (TEMPLATE_CACHE.has(source)) return TEMPLATE_CACHE.get(source);
+function compileTemplate(source, ends) {
+  const key = ends ? 'messages:' + JSON.stringify([source, ends]) : 'text:' + source;
+  if (TEMPLATE_CACHE.has(key)) return TEMPLATE_CACHE.get(key);
 
   const segments = [];
   let index = 0;
@@ -630,14 +631,25 @@ function compileTemplate(source) {
   /** 见过至少一个 EJS 标记（即使它只产出文本，例如 `<%%`）。 */
   let sawTag = false;
 
-  const pushText = (text) => {
+  const slotAt = (offset) => ends?.findIndex((end) => offset < end) ?? 0;
+  const pushText = (text, offset, literal = false) => {
     if (!text) return;
     let value = text;
     if (pendingTrim === 'line') value = value.replace(/^[ \t]*\r?\n/, '');
     else if (pendingTrim === 'all') value = value.replace(/^\s+/, '');
     pendingTrim = null;
     if (!value) return;
-    segments.push({ type: 'text', value });
+    if (!ends || literal) {
+      segments.push({ type: 'text', value, slot: slotAt(offset) });
+      return;
+    }
+    let position = offset + text.length - value.length;
+    for (let slot = slotAt(position); value && slot >= 0 && slot < ends.length; slot += 1) {
+      const length = ends[slot] - position;
+      if (length > 0) segments.push({ type: 'text', value: value.slice(0, length), slot });
+      value = value.slice(length);
+      position = ends[slot];
+    }
   };
 
   /** `<%_`：吃掉标签前面的所有空白（含换行）。 */
@@ -649,16 +661,16 @@ function compileTemplate(source) {
   while (index < source.length) {
     const open = source.indexOf(TAG_OPEN, index);
     if (open < 0) {
-      pushText(source.slice(index));
+      pushText(source.slice(index), index);
       break;
     }
     sawTag = true;
     let cursor = open + 2;
-    pushText(source.slice(index, open));
+    pushText(source.slice(index, open), index);
 
     // <%% 输出字面量 <%
     if (source[cursor] === '%') {
-      pushText('<%');
+      pushText('<%', open, true);
       index = cursor + 1;
       continue;
     }
@@ -675,7 +687,7 @@ function compileTemplate(source) {
     if (close < 0) {
       // 未闭合：原样保留剩余文本（EJS 的行为是报错；这里选择不丢内容）
       if (slurpBefore) slurpTrailing();
-      segments.push({ type: 'text', value: source.slice(open) });
+      pushText(source.slice(open), open);
       index = source.length;
       break;
     }
@@ -693,32 +705,33 @@ function compileTemplate(source) {
 
     if (kind === '#') continue;
     if (kind === '=' || kind === '-') {
-      segments.push({ type: kind === '=' ? 'escaped' : 'raw', code });
+      segments.push({ type: kind === '=' ? 'escaped' : 'raw', code, slot: slotAt(open) });
     } else {
       segments.push({ type: 'code', code });
     }
   }
 
   if (!sawTag) {
-    TEMPLATE_CACHE.set(source, null);
+    TEMPLATE_CACHE.set(key, null);
     return null;
   }
 
   const body = [];
   for (const segment of segments) {
+    const target = ends ? `__out[${segment.slot}]` : '__out';
     if (segment.type === 'text') {
-      if (segment.value) body.push(`__out += ${JSON.stringify(segment.value)};`);
+      if (segment.value) body.push(`${target} += ${JSON.stringify(segment.value)};`);
     } else if (segment.type === 'escaped') {
-      body.push(`__out += __esc((${segment.code}));`);
+      body.push(`${target} += __esc((${segment.code}));`);
     } else if (segment.type === 'raw') {
-      body.push(`__out += __raw((${segment.code}));`);
+      body.push(`${target} += __raw((${segment.code}));`);
     } else {
       body.push(segment.code);
     }
   }
 
   const program = `
-    var __out = '';
+    var __out = ${ends ? JSON.stringify(ends.map(() => '')) : "''"};
     with (__scope) {
       ${body.join('\n')}
     }
@@ -733,7 +746,7 @@ function compileTemplate(source) {
     fn = null;
   }
   if (TEMPLATE_CACHE.size >= TEMPLATE_CACHE_LIMIT) TEMPLATE_CACHE.clear();
-  TEMPLATE_CACHE.set(source, fn);
+  TEMPLATE_CACHE.set(key, fn);
   return fn;
 }
 
@@ -757,5 +770,26 @@ export function renderEjs(template, scope = {}, options = {}) {
     const message = String(error && error.message ? error.message : error);
     const fallback = options.keepOnError ? source : stripTags(source);
     return `${fallback}\n<!-- dsh-tt EJS error: ${message.replace(/-->/g, '--&gt;')} -->`;
+  }
+}
+
+/** Evaluate shared template control flow and keep output in its original message slot. */
+export function renderEjsMessages(messages, scope) {
+  if (messages.length <= 1) return messages.map((message) => renderEjs(message, scope));
+  if (!messages.some((message) => message.includes(TAG_OPEN))) return messages;
+  let source = '';
+  const ends = messages.map((message, index) => {
+    source += message;
+    if (index < messages.length - 1) source += '\n\n';
+    return source.length;
+  });
+  const fn = compileTemplate(source, ends);
+  if (!fn) return messages.map((message) => renderEjs(message, scope));
+  try {
+    return fn(scope, escapeHtml, (value) => String(value ?? ''));
+  } catch (error) {
+    const message = String(error?.message ?? error).replace(/-->/g, '--&gt;');
+    return messages.map((entry, index) => stripTags(entry)
+      + (index === 0 ? `\n<!-- dsh-tt EJS error: ${message} -->` : ''));
   }
 }

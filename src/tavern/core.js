@@ -270,7 +270,7 @@ var TT_CORE = (function () {
     var characterVars = initialVars.character && typeof initialVars.character === 'object' ? initialVars.character : {};
     var presetVars = initialVars.preset && typeof initialVars.preset === 'object' ? initialVars.preset : {};
     var scriptVars = initialVars.script && typeof initialVars.script === 'object' ? initialVars.script : {};
-    var chatMetadata = { variables: initialVars.chat && typeof initialVars.chat === 'object' ? initialVars.chat : {} };
+    var chatMetadata = { ...settings.chatMetadata, variables: initialVars.chat && typeof initialVars.chat === 'object' ? initialVars.chat : {} };
     var extensionSettings = settings.extensionSettings && typeof settings.extensionSettings === 'object'
       ? settings.extensionSettings
       : {};
@@ -539,9 +539,10 @@ var TT_CORE = (function () {
       postScope(opts);
     }
 
-    function touchMessage(index) {
+    function touchMessage(index, edited) {
       var message = chat[index];
       if (!message) return;
+      if (edited === true) message.__ttEdited = true;
       var vars = clone((message.variables && message.variables[message.swipe_id || 0]) || {});
       post({
         tt: 'message',
@@ -754,6 +755,14 @@ var TT_CORE = (function () {
       return { name: name == null ? worldbookName : name, entries: entries };
     }
 
+    function setExtensionWorldbook(book, character) {
+      if (character) worldbookEntries = flattenEntries(book.entries);
+      else {
+        chatWorldbookName = book.name;
+        chatWorldbookEntries = flattenEntries(book.entries);
+      }
+    }
+
     function getCharWorldbookNames() {
       return { primary: worldbookName, additional: [] };
     }
@@ -789,13 +798,13 @@ var TT_CORE = (function () {
       return { named: named, positional: positional };
     }
 
-    function runOneCommand(command, pipeValue) {
+    function runOneCommand(command, pipeValue, parsed) {
       var text = String(command || '').trim();
       if (text[0] === '/') text = text.slice(1);
       var space = text.indexOf(' ');
       var name = (space < 0 ? text : text.slice(0, space)).toLowerCase();
       var rest = space < 0 ? '' : text.slice(space + 1);
-      var args = parseNamed(rest.replace(/\{\{pipe\}\}/g, pipeValue));
+      var args = parsed || parseNamed(rest.replace(/\{\{pipe\}\}/g, pipeValue));
       var namedKeys = Object.keys(args.named);
       var singlePair = namedKeys.length === 1 && args.positional.length === 0 && namedKeys[0] !== 'key' && namedKeys[0] !== 'value';
       var key = args.named.key || (singlePair ? namedKeys[0] : args.positional[0]) || '';
@@ -803,7 +812,7 @@ var TT_CORE = (function () {
         ? args.named.value
         : singlePair
           ? args.named[namedKeys[0]]
-          : (args.positional.slice(1).join(' ') || pipeValue);
+          : (args.positional.slice(args.named.key ? 0 : 1).join(' ') || pipeValue);
       switch (name) {
         case 'setvar': setPath(chatMetadata.variables, key, value); postScope({ type: 'chat' }); return '';
         case 'getvar': {
@@ -946,6 +955,7 @@ var TT_CORE = (function () {
       // 世界书
       getLorebookEntries: getLorebookEntries,
       getWorldbook: getWorldbook,
+      setExtensionWorldbook: setExtensionWorldbook,
       getWorldbookNames: getWorldbookNames,
       getGlobalWorldbookNames: function () { return []; },
       getChatWorldbookName: function () { return chatWorldbookName; },
@@ -954,6 +964,9 @@ var TT_CORE = (function () {
       // 其它
       getCharacterCardFields: getCharacterCardFields,
       slashCommand: slashCommand,
+      runParsedCommand: function (command, pipe) { return runOneCommand(command.name, pipe, {
+        named: command.named, positional: command.unnamed,
+      }); },
       makeScriptContext: makeScriptContext,
       getCurrentScriptId: function () { return currentScriptId; },
       getCurrentMessageId: function () { return currentMessageId; },

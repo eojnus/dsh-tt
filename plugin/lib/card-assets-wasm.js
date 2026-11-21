@@ -7,26 +7,35 @@ export function createCardAssetsWasm(bytes) {
   let encoder;
   let error = null;
   let lorebookContext;
-  function withLorebookHook(fallback, action) {
-    if (!lorebookContext || lorebookContext.failed) return fallback;
-    try { return action(lorebookContext.hooks); }
+  let templateContext;
+  function withHook(context, fallback, action) {
+    if (!context || context.failed) return fallback;
+    try { return action(context.hooks); }
     catch (cause) {
-      lorebookContext.failed = true;
-      lorebookContext.error = cause;
+      context.failed = true;
+      context.error = cause;
       return fallback;
     }
   }
   try {
     wasm = new WebAssembly.Instance(new WebAssembly.Module(bytes), { dsh_tt: {
-      start_lorebook_round: (ptr, len) => withLorebookHook(undefined, (hooks) => {
+      start_lorebook_round: (ptr, len) => withHook(lorebookContext, undefined, (hooks) => {
         const text = decoder.decode(new Uint8Array(memory.buffer, ptr, len));
         hooks.startRound(text);
       }),
-      match_lorebook_entry: (index) => withLorebookHook(0, (hooks) => hooks.matchEntry(index)),
-      lorebook_random: () => withLorebookHook(1, (hooks) => hooks.random()),
-      sort_legacy_lorebook_entries: (ptr, len, grouped) => withLorebookHook(undefined, (hooks) => {
+      match_lorebook_entry: (index) => withHook(lorebookContext, 0, (hooks) => hooks.matchEntry(index)),
+      lorebook_random: () => withHook(lorebookContext, 1, (hooks) => hooks.random()),
+      sort_legacy_lorebook_entries: (ptr, len, grouped) => withHook(lorebookContext, undefined, (hooks) => {
         const entries = new Uint32Array(memory.buffer, ptr, len);
         entries.set(hooks.sortLegacy(Array.from(entries), Boolean(grouped)));
+      }),
+      decorate_chat_source: (ptr, len) => withHook(templateContext, 0n, (decorate) => {
+        const source = decoder.decode(new Uint8Array(memory.buffer, ptr, len));
+        const bytes = encoder.encode(decorate(source));
+        if (!bytes.length) return 0n;
+        const output = wasm.alloc(bytes.length) >>> 0;
+        new Uint8Array(memory.buffer, output, bytes.length).set(bytes);
+        return (BigInt(bytes.length) << 32n) | BigInt(output);
       }),
     } }).exports;
     if (!(wasm.memory instanceof WebAssembly.Memory) ||
@@ -66,6 +75,11 @@ export function createCardAssetsWasm(bytes) {
       error = String(cause?.message || cause);
       return null;
     }
+  }
+
+  function callValue(operation, value) {
+    if (typeof wasm?.[operation] !== 'function') return null;
+    return callJson(operation, encoder.encode(JSON.stringify(value)));
   }
 
   return {
@@ -119,6 +133,22 @@ export function createCardAssetsWasm(bytes) {
       if (typeof wasm?.assemble_generation !== 'function') return null;
       return callJson('assemble_generation', encoder.encode(JSON.stringify(input)));
     },
+    prepareChatTemplates(input, decorate) {
+      const previous = templateContext;
+      const context = { hooks: decorate, failed: false, error: null };
+      templateContext = context;
+      try {
+        const result = callValue('prepare_chat_templates', input);
+        if (context.failed) throw context.error;
+        return result;
+      } finally {
+        templateContext = previous;
+      }
+    },
+    assembleChatPrompt(input) {
+      if (typeof wasm?.assemble_chat_prompt !== 'function') return null;
+      return callJson('assemble_chat_prompt', encoder.encode(JSON.stringify(input)));
+    },
     encodeDisplayCapture(kind, value) {
       if (typeof wasm?.encode_display_capture !== 'function') return null;
       return callJson('encode_display_capture', encoder.encode(JSON.stringify({ kind, value })));
@@ -126,6 +156,40 @@ export function createCardAssetsWasm(bytes) {
     partitionPromptInjections(input) {
       if (typeof wasm?.partition_prompt_injections !== 'function') return null;
       return callJson('partition_prompt_injections', encoder.encode(JSON.stringify(input)));
+    },
+    normalizePreset(input) {
+      return callValue('normalize_preset', input);
+    },
+    extensionRepository(input) {
+      return callValue('extension_repository', input);
+    },
+    indexExtensionArchive(bytes) {
+      if (typeof wasm?.index_extension_archive !== 'function') return null;
+      return callJson('index_extension_archive', bytes);
+    },
+    parseExtensionCommands(text) {
+      return callValue('parse_extension_commands', text);
+    },
+    editExtensionWorldbook(input) {
+      return callValue('edit_extension_worldbook', input);
+    },
+    applyPresetOverrides(input) {
+      return callValue('apply_preset_overrides', input);
+    },
+    viewScriptPreset(input) {
+      return callValue('view_script_preset', input);
+    },
+    editScriptPreset(input) {
+      return callValue('edit_script_preset', input);
+    },
+    projectChatFloors(input) {
+      return callValue('project_chat_floors', input);
+    },
+    projectLiveReply(input) {
+      return callValue('project_live_reply', input);
+    },
+    mergeFloorWindow(input) {
+      return callValue('merge_floor_window', input);
     },
   };
 }

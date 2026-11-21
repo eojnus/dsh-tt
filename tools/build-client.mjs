@@ -52,6 +52,7 @@ let out = template;
 out = replaceOnce(out, 'const CSS = __PANEL_CSS__;', `const CSS = ${JSON.stringify(fs.readFileSync(path.join(root, 'src/panel.css'), 'utf8'))};`, '面板样式');
 out = replaceOnce(out, '/* __DSH_PANEL_UI__ */', compile('src/panel-ui.ts'), '面板组件');
 out = replaceOnce(out, '/* __DSH_GENERATION_TRANSPORT__ */', compile('src/auxiliary-transport.ts'), '辅助生成客户端');
+out = replaceOnce(out, '/* __DSH_EXTENSIONS_CLIENT__ */', compile('src/extensions-client.ts'), '第三方扩展客户端');
 out = replaceOnce(out, '/* __DSH_MESSAGE_DISPLAYS__ */', compile('src/message-displays.ts'), '动态消息界面');
 out = replaceOnce(out, 'const SNAPSHOT = __SNAPSHOT__;', `const SNAPSHOT = ${JSON.stringify(clientSnapshot)};`, '快照');
 out = replaceOnce(out, 'const TAVERN_CORE_SRC = __TAVERN_CORE__;', `const TAVERN_CORE_SRC = ${JSON.stringify(coreSource)};`, 'TH 核心');
@@ -64,6 +65,8 @@ out = replaceOnce(out, 'const TT_LIB_SRC = __TT_LIB__;', `const TT_LIB_SRC = ${J
 
 fs.writeFileSync(path.join(root, 'plugin/lib/dsh-generation.js'),
   '// Generated from src/dsh-generation.ts by tools/build-client.mjs.\n' + compile('src/dsh-generation.ts'), 'utf8');
+fs.writeFileSync(path.join(root, 'plugin/lib/dsh-extensions.js'),
+  '// Generated from src/dsh-extensions.ts by tools/build-client.mjs.\n' + compile('src/dsh-extensions.ts'), 'utf8');
 fs.writeFileSync(path.join(root, 'plugin/client.js'), out, 'utf8');
 console.log(
   `client.js 已生成（${(out.length / 1024).toFixed(1)} KB：` +
