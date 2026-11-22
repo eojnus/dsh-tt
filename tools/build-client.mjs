@@ -51,6 +51,7 @@ function replaceOnce(source, marker, literal, label) {
 let out = template;
 out = replaceOnce(out, 'const CSS = __PANEL_CSS__;', `const CSS = ${JSON.stringify(fs.readFileSync(path.join(root, 'src/panel.css'), 'utf8'))};`, '面板样式');
 out = replaceOnce(out, '/* __DSH_PANEL_UI__ */', compile('src/panel-ui.ts'), '面板组件');
+out = replaceOnce(out, '/* __DSH_IMPORTED_ASSETS__ */', compile('src/imported-assets.ts'), '导入资产存储');
 out = replaceOnce(out, '/* __DSH_GENERATION_TRANSPORT__ */', compile('src/auxiliary-transport.ts'), '辅助生成客户端');
 out = replaceOnce(out, '/* __DSH_EXTENSIONS_CLIENT__ */', compile('src/extensions-client.ts'), '第三方扩展客户端');
 out = replaceOnce(out, '/* __DSH_MESSAGE_DISPLAYS__ */', compile('src/message-displays.ts'), '动态消息界面');

@@ -76,6 +76,11 @@ pub unsafe extern "C" fn parse_extension_commands(ptr: *const u8, len: usize) ->
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn plan_message_action(ptr: *const u8, len: usize) -> u64 {
+    json_operation(ptr, len, |input| slash::message_action(input.as_str()?))
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn edit_extension_worldbook(ptr: *const u8, len: usize) -> u64 {
     json_operation(ptr, len, |input| Some(match worldbook_edit::apply(input) {
         Ok(result) => result,
@@ -130,6 +135,18 @@ pub unsafe extern "C" fn layout_message_fences(ptr: *const u8, len: usize) -> u6
     message::fence_layout(&source)
         .as_ref()
         .map_or(0, json_output)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn project_message_prose(ptr: *const u8, len: usize) -> u64 {
+    json_operation(ptr, len, message::project_prose)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn normalize_grouped_choices(ptr: *const u8, len: usize) -> u64 {
+    json_operation(ptr, len, |input| {
+        Some(Value::String(message::normalize_grouped_choices(input.as_str()?)))
+    })
 }
 
 #[cfg(target_arch = "wasm32")]

@@ -117,6 +117,12 @@ export function createCardAssetsWasm(bytes) {
       if (typeof wasm?.layout_message_fences !== 'function') return null;
       return callJson('layout_message_fences', encoder.encode(JSON.stringify(text)));
     },
+    projectMessageProse(blocks, hidden) {
+      return callValue('project_message_prose', { blocks, hidden });
+    },
+    normalizeGroupedChoices(text) {
+      return callValue('normalize_grouped_choices', text);
+    },
     buildLorebookScanWindows(input) {
       if (typeof wasm?.build_lorebook_scan_windows !== 'function') return null;
       return callJson('build_lorebook_scan_windows', encoder.encode(JSON.stringify(input)));
@@ -169,6 +175,9 @@ export function createCardAssetsWasm(bytes) {
     },
     parseExtensionCommands(text) {
       return callValue('parse_extension_commands', text);
+    },
+    planMessageAction(command) {
+      return callValue('plan_message_action', command);
     },
     editExtensionWorldbook(input) {
       return callValue('edit_extension_worldbook', input);

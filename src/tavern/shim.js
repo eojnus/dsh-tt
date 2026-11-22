@@ -689,7 +689,11 @@
     if (!message) return '';
     return textToHtml(applyRegexes(message.message, 2));
   };
-  window.retrieveDisplayedMessage = window.formatAsDisplayedMessage;
+  window.retrieveDisplayedMessage = function (messageId) {
+    if (!Number.isSafeInteger(messageId) || messageId < 0) return $();
+    var bubble = window.parent?.document?.querySelector('.tt-thread > .tt-fl[mesid="' + messageId + '"] .tt-bub');
+    return $(bubble || undefined);
+  };
   window.refreshOneMessage = function (messageId) { post({ tt: 'refresh', index: messageId }); };
   window.triggerSlash = function (command) {
     if (hostExtensions?.length) return executeExtensionCommands(command).then(function (result) {
@@ -855,11 +859,16 @@
     await window.replacePreset(name, next, options);
     return window.getPreset(name);
   };
+  window.setPreset = function (name, patch, options) {
+    return window.updatePresetWith(name, function (preset) {
+      return { ...preset, ...patch, settings: { ...preset.settings, ...patch.settings },
+        extensions: { ...preset.extensions, ...patch.extensions } };
+    }, options);
+  };
   window.createPreset = function () { throw new Error('DSH TH 宿主：预设写入未接通'); };
   window.createOrReplacePreset = function () { throw new Error('DSH TH 宿主：预设写入未接通'); };
   window.deletePreset = function () { throw new Error('DSH TH 宿主：预设写入未接通'); };
   window.renamePreset = function () { throw new Error('DSH TH 宿主：预设写入未接通'); };
-  window.setPreset = function () { throw new Error('DSH TH 宿主：预设写入未接通'); };
   window.getCharacterNames = function () { return [core.charName]; };
   window.getCharacterIds = function () { return ['0']; };
   window.getCurrentCharacterName = function () { return core.charName; };
@@ -1206,6 +1215,8 @@
   Object.defineProperty(ST, 'extensionSettings', { get: function () { return core.extensionSettings; }, enumerable: true, configurable: true });
   Object.defineProperty(ST, 'characters', { get: function () { return core.characters; }, enumerable: true, configurable: true });
   Object.defineProperty(ST, 'chatCompletionSettings', { value: ST.chatCompletionSettings, writable: true, enumerable: true, configurable: true });
+  Object.defineProperty(ST.chatCompletionSettings, 'extensions', { enumerable: true,
+    get: function () { return presetViews.active?.extensions || {}; } });
   window.SillyTavern = ST;
   window.getContext = ST.getContext;
 
@@ -1224,7 +1235,7 @@
     'getLorebooks', 'getLorebookSettings', 'setLorebookSettings', 'getTavernRegexes', 'formatAsTavernRegexedString',
     'isCharacterTavernRegexesEnabled', 'registerMacroLike', 'injectPrompts', 'uninjectPrompts', 'generate',
     'generateRaw', 'getModelList', 'getProxyPresetNames', 'stopGenerationById', 'stopAllGeneration',
-    'getPresetNames', 'getLoadedPresetName', 'getPreset', 'loadPreset', 'replacePreset', 'updatePresetWith', 'getCharacterNames',
+    'getPresetNames', 'getLoadedPresetName', 'getPreset', 'loadPreset', 'replacePreset', 'updatePresetWith', 'setPreset', 'getCharacterNames',
     'getCharacterIds', 'getCurrentCharacterName', 'getCurrentCharacterId', 'getCharData', 'getCharAvatarPath',
     'getChatHistoryBrief', 'getChatHistoryDetail', 'getPersonaNames', 'getPersonaIds', 'getCurrentPersonaName',
     'getCurrentPersonaId', 'getPersonaAvatarPath', 'getMessageId', 'errorCatched', 'getScriptId',
@@ -1539,6 +1550,7 @@
         }
         case 'preset-views':
           presetViews = data.views || {};
+          if (Array.isArray(data.regexScripts)) INIT.regexScripts = data.regexScripts;
           break;
         case 'preset-write-result':
           presetWrites.get(data.id)?.(data.error, data.views);

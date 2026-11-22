@@ -230,13 +230,16 @@ test('client.js：模块注册、apply 注册槽位、Panel 首屏可渲染', as
   }
 });
 
-test('新局渲染卡片主页，可从主页进入同一局的备选剧情', async () => {
+test('新局直接渲染作者默认开场，可在对话开始前主动切换', async () => {
   const raw = cardFixture();
-  raw.data.first_mes = '【主页】';
+  raw.data.first_mes = '【主页】\n';
   raw.data.alternate_greetings = ['剧情开场甲', '剧情开场乙'];
   raw.data.extensions.regex_scripts = [{
     placement: [2], markdownOnly: true, findRegex: '【主页】',
     replaceString: '```html\n<body><main id="card-home">卡片主页</main><script>window.parent.DreamRpg;</script></body>\n```',
+  }, {
+    placement: [1], markdownOnly: true, findRegex: '<rpg_ans>([^<]+)</rpg_ans>',
+    replaceString: '<style>.drpg-action { color: blue; }</style><span class="drpg-action" data-drpg-answer>$1</span>',
   }];
   raw.data.extensions.tavern_helper = { scripts: [
     { id: 'rpg', type: 'script', name: '梦境 RPG', content: 'window.parent.DreamRpg = {};', enabled: true },
@@ -344,28 +347,39 @@ test('新局渲染卡片主页，可从主页进入同一局的备选剧情', as
 
     await clickButton(render(), '新建对话');
     assert.deepEqual(reads, [['chat-1', 'card.json']]);
-    assert.equal(states.get(0).sessionMeta['chat-1'].greeting, '【主页】');
+    assert.equal(states.get(0).sessionMeta['chat-1'].greeting, raw.data.first_mes);
     const chat = render();
     assert.doesNotMatch(collectText(chat), /选择开场白/);
     assert.match(findTags(chat, 'iframe')[0].props.srcDoc, /id="card-home"/);
     assert.equal(findTags(chat, 'iframe')[0].props.sandbox, 'allow-scripts allow-same-origin');
 
-    clickButton(chat, '开始剧情');
+    clickButton(chat, '脚本工具');
+    const scriptTools = findTags(render(), 'dialog').find((item) => item.props.id === 'tt-script-tools');
+    assert.ok(buttonNamed(scriptTools, '打开扩展与脚本界面'));
+    clickButton(scriptTools, '关闭');
+
+    assert.equal(buttonNamed(chat, '开始剧情'), undefined);
+    clickButton(chat, '切换开场白');
     history = [{ type: 'event', event: { type: 'user/message' } }];
     await clickButton(render(), '剧情开场甲');
     assert.match(collectText(render()), /这局已经开始对话/);
-    assert.equal(states.get(0).sessionMeta['chat-1'].greeting, '【主页】');
+    assert.equal(states.get(0).sessionMeta['chat-1'].greeting, raw.data.first_mes);
 
     history = [];
-    clickButton(render(), '开始剧情');
+    clickButton(render(), '切换开场白');
     await clickButton(render(), '剧情开场甲');
     assert.equal(sessions, 1);
     assert.equal(states.get(0).sessionMeta['chat-1'].greeting, '剧情开场甲');
     assert.match(collectText(render()), /剧情开场甲/);
 
+    clickButton(render(), '切换开场白');
+    await clickButton(render(), '作者默认');
+    assert.equal(sessions, 1);
+    assert.equal(states.get(0).sessionMeta['chat-1'].greeting, raw.data.first_mes);
+
     clickButton(chat, '角色卡');
     await clickButton(render(), '开始对话');
-    assert.equal(states.get(0).sessionMeta['chat-2'].greeting, '【主页】');
+    assert.equal(states.get(0).sessionMeta['chat-2'].greeting, raw.data.first_mes);
     clickButton(render(), '角色卡');
     clickButton(render(), '从备选开场新建');
     const picker = render();
@@ -399,7 +413,8 @@ test('新局渲染卡片主页，可从主页进入同一局的备选剧情', as
     assert.equal(textarea().props.value, '');
     assert.match(prompts[1].content[0].text, /剧情开场乙/);
 
-    const earlier = { type: 'event', event: { type: 'user/message', seq: 1, data: { content: '已提交的输入' } } };
+    const earlier = { type: 'event', event: { type: 'user/message', seq: 1,
+      data: { content: '已提交的输入\n\n<rpg_ans>穿过大厅</rpg_ans>' } } };
     history = [earlier];
     render();
     cleanupFeed = effects.findLast((effect) => String(effect).includes('bridge.retainSession'))();
@@ -425,18 +440,27 @@ test('新局渲染卡片主页，可从主页进入同一局的备选剧情', as
     assert.doesNotMatch(collectText(streamRow), /内部状态|dream_plot|UpdateVariable/);
     const finalReply = { type: 'event', event: { type: 'assistant/message', surfaceOp: 'append', seq: 3,
       data: { turn: 1, step: 1, message: { content: [
-        { type: 'reasoning', text: '单独的思考文本' }, { type: 'text', text: '<dream_plot>完成的故事</dream_plot>\n```html\n<script>window.parent.DreamRpg;</script>\n```' },
+        { type: 'reasoning', text: '单独的思考文本' }, { type: 'text', text: '<style>.internal{color:red}</style><dream_plot>完成的故事</dream_plot>\n```html\n<script>window.parent.DreamRpg;</script>\n```' },
       ] } } } };
     const completed = await publishLive([earlier, thought, partial, finalReply], false);
     assert.doesNotMatch(collectText(completed), /正在写的故事|生成中/);
     assert.match(collectText(completed), /思考过程/);
     assert.match(collectText(completed), /完成的故事/);
+    assert.doesNotMatch(collectText(completed), /drpg-action|rpg_ans|internal|<style>/);
     assert.equal(collectText(completed).match(/已提交的输入/g).length, 1);
+    const player = findTags(completed, 'article').find((item) => item.props.className === 'tt-fl user mes');
+    assert.ok(findTags(completed, 'div').some((item) => item.props.id === 'chat'));
+    assert.ok(findTags(completed, 'div').some((item) => item.props.className === 'tt-bub mes_text'));
+    const action = findTags(player, 'iframe')[0];
+    assert.match(action.props.srcDoc, /<span class="drpg-action" data-drpg-answer>穿过大厅<\/span>/);
+    assert.equal(action.props.sandbox, 'allow-scripts');
+    assert.match(action.props.srcDoc, /default-src 'none'/);
     const finalRow = findTags(completed, 'article').find((item) => collectText(item).includes('完成的故事'));
     assert.equal(finalRow.props.key, streamRow.props.key);
     assert.equal(findTags(finalRow, 'iframe')[0].props.sandbox, 'allow-scripts');
     const composer = findTags(completed, 'textarea')[0];
     assert.equal(composer.props.id, 'send_textarea');
+    assert.ok(findTags(completed, 'button').some((item) => item.props.id === 'send_but'));
     composer.props.onInput({ nativeEvent: { isTrusted: false }, currentTarget: { value: 'RPG 行动' } });
     assert.equal(textarea().props.value, 'RPG 行动');
     cleanupFeed();
@@ -491,6 +515,19 @@ test('新局渲染卡片主页，可从主页进入同一局的备选剧情', as
     clickButton(render(), '取消');
     assert.equal(archiveAttempts.length, 2);
 
+    const desktop = render();
+    assert.equal(findTags(findTags(desktop, 'aside')[0], 'nav').length, 0);
+    assert.ok(buttonNamed(findTags(desktop, 'nav')[0], '角色卡'));
+    clickButton(desktop, '收起会话列表');
+    assert.equal(findTags(render(), 'aside').length, 0);
+    assert.equal(findTags(render(), 'nav').length, 1);
+    clickButton(render(), '展开会话列表');
+    assert.ok(buttonNamed(render(), '会话 1'));
+
+    const options = findTags(render(), 'details').find((node) => node.props.className === 'tt-chat-options');
+    assert.equal(findTags(options, 'summary')[0].props.title, '对话选项');
+    assert.equal(findTags(options, 'select').length, 3);
+
     const panel = findTags(render(), 'div').find((node) => node.props.className === 'tt-root');
     panel.props.ref.current = { clientWidth: 480 };
     effects[0]();
@@ -498,6 +535,8 @@ test('新局渲染卡片主页，可从主页进入同一局的备选剧情', as
     clickButton(render(), '会话与页面');
     const drawer = findTags(render(), 'dialog')[0];
     assert.equal(drawer.props.id, 'tt-navigation');
+    assert.equal(findTags(drawer, 'nav').length, 1);
+    assert.equal(findTags(drawer, 'aside').length, 1);
     clickButton(drawer, '关闭会话与页面');
     assert.equal(findTags(render(), 'dialog').length, 0);
     clickButton(render(), '会话与页面');
@@ -515,8 +554,14 @@ test('新局渲染卡片主页，可从主页进入同一局的备选剧情', as
       assert.equal(radios().find((item) => item.props.checked).props.value, choice);
     }
     assert.equal(JSON.parse(persistedStore).theme, 'dark');
+    const fontPicker = () => findTags(render(), 'select').find((item) => item.props.className === 'tt-search'
+      && findTags(item, 'option').some((option) => option.props.value === 'kai'));
+    fontPicker().props.onChange({ target: { value: 'kai' } });
+    assert.equal(JSON.parse(persistedStore).messageFont, 'kai');
     states.clear();
     assert.equal(theme(), 'dark');
+    clickButton(render(), '设置与诊断');
+    assert.equal(fontPicker().props.value, 'kai');
   } finally {
     cleanupFeed?.();
     Object.assign(globalThis, saved);

@@ -57,3 +57,17 @@ pub fn parse(text: &str) -> Result<Value, &'static str> {
     if !last.is_null() { commands.push(last); }
     Ok(json!({"commands": commands}))
 }
+
+pub fn message_action(command: &str) -> Option<Value> {
+    let (name, rest) = command.trim().split_once(char::is_whitespace)?;
+    if name.eq_ignore_ascii_case("/setinput") {
+        return Some(json!({"text": rest.trim(), "send": false, "replace": true}));
+    }
+    if name.eq_ignore_ascii_case("/send") {
+        let (text, tail) = rest.rsplit_once('|')?;
+        if tail.trim().eq_ignore_ascii_case("/trigger") && !text.trim().is_empty() {
+            return Some(json!({"text": text.trim(), "send": true, "replace": true}));
+        }
+    }
+    None
+}

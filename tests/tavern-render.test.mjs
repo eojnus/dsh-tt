@@ -5,7 +5,7 @@ import vm from 'node:vm';
 import { stripTypeScriptTypes } from 'node:module';
 import { loadBundledLib } from '../tools/bundle-lib.mjs';
 import { cardAssetsWasm } from '../plugin/lib/card-assets-wasm.js';
-import { assistantProse, buildMessageFrame, fenceDisplayFragment, hideAssistantControlBlocks, literalAssetDisplays, splitMessageBlocks, streamingAssistantProse, vendorScript } from '../plugin/lib/message-html.js';
+import { assistantProse, buildMessageFrame, fenceDisplayFragment, hideAssistantControlBlocks, literalAssetDisplays, roleplayMessageBlocks, splitMessageBlocks, streamingAssistantProse, vendorScript } from '../plugin/lib/message-html.js';
 
 async function runHostedScripts(scripts, init = {}, options = {}) {
   const read = (file) => fs.readFileSync(new URL(`../src/tavern/${file}`, import.meta.url), 'utf8');
@@ -433,6 +433,22 @@ test('酒馆楼层：显示预设状态栏与正文，隐藏推理和带代码�
   assert.equal(streamingAssistantProse('<dream_plot>正文<JSONPatch>局部变量'), '正文');
 });
 
+test('酒馆楼层：过滤残留脚本和控制块，保留跨围栏的正文与界面', () => {
+  const html = '<style>.action { color: blue }</style><span class="action">查看门牌</span>';
+  const text = '先看门口。<!-- 内部备注 --><style>.leak { color: blue }</style>'
+    + '<div title="值 > 0">灯还亮着。</div><dream_rpg>内部行动\n'
+    + '```html\n<span>内部模板</span>\n```\n内部数据</dream_rpg>\n'
+    + '```js\nlet internal = 1;\n```\n' + fenceDisplayFragment(html) + '\n继续前行。<JSONPatch>未闭合内部状态';
+  const summarize = (blocks) => blocks.map(({ type, text }) => [type, text.trim()]);
+  const expected = [['text', '先看门口。灯还亮着。'], ['html', html], ['text', '继续前行。']];
+  assert.deepEqual(summarize(roleplayMessageBlocks(text)), expected);
+  assert.deepEqual(summarize(roleplayMessageBlocks(text, false, null)), expected);
+  assert.equal(streamingAssistantProse('正文<dream_scene>未结束的状态栏'), '正文');
+  assert.equal(streamingAssistantProse('正文\n```css\n.action { color: red'), '正文');
+  assert.equal(streamingAssistantProse('亮着的灯<sty'), '亮着的灯');
+  assert.equal(streamingAssistantProse('<think_fox~>推演</think_fox~>正文<fox_selc>选项'), '正文');
+});
+
 test('酒馆楼层：只有卡片模板能获得楼层数据，普通输出使用受限的 iframe 文档', () => {
   const html = '<body><div id="status">状态栏</div></body>';
   const fenced = (code) => '```html\n' + code + '\n```';
@@ -455,4 +471,12 @@ test('酒馆楼层：只有卡片模板能获得楼层数据，普通输出使�
   const staticDoc = buildMessageFrame(html, { nonce: 'testing' });
   assert.match(staticDoc, /default-src 'none'; script-src 'nonce-testing'/);
   assert.doesNotMatch(staticDoc, /"stat_data"/);
+});
+
+test('楼层交互命令只填入和发送文字，保留选项里的竖线和换行', () => {
+  const wasm = cardAssetsWasm();
+  assert.deepEqual(wasm.planMessageAction('/setinput 走左边 | 查看门牌'), { text: '走左边 | 查看门牌', replace: true, send: false });
+  assert.deepEqual(wasm.planMessageAction('/send 走左边\n查看门牌|/trigger'), { text: '走左边\n查看门牌', replace: true, send: true });
+  assert.equal(wasm.planMessageAction('/send 选项|/comment'), null);
+  assert.equal(wasm.planMessageAction('/other 文字'), null);
 });

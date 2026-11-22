@@ -20,6 +20,7 @@ window.__ModuleLoader__.load({
     const RP_PREFIX = 'RP · ';
     const POPUP_RESULT = { AFFIRMATIVE: 1, NEGATIVE: 0, CANCELLED: -1 };
     const POPUP_TYPE = { TEXT: 1, CONFIRM: 2, INPUT: 3, DISPLAY: 4 };
+    /* __DSH_IMPORTED_ASSETS__ */
 
     // Host 提示词管线的同构副本（tools/bundle-lib.mjs 生成）。首次预览时才求值。
     let ttLibCache = null;
@@ -104,11 +105,17 @@ window.__ModuleLoader__.load({
       return raw && typeof raw === 'object' ? (raw.data && typeof raw.data === 'object' ? raw.data : raw) : {};
     }
 
+    function authorGreetingOf(raw) {
+      const inner = innerOf(raw);
+      const text = inner.first_mes ?? inner.firstMes;
+      return typeof text === 'string' && text.trim() ? text : '';
+    }
+
     function greetingOptionsOf(raw) {
       const inner = innerOf(raw);
-      const first = String(inner.first_mes || inner.firstMes || '').trim();
+      const first = authorGreetingOf(raw);
       const alternates = inner.alternate_greetings ?? inner.alternateGreetings;
-      const options = first ? [{ id: 'first', label: '首条问候', text: first }] : [];
+      const options = first ? [{ id: 'first', label: '作者默认', text: first }] : [];
       if (Array.isArray(alternates)) {
         alternates.forEach((value, index) => {
           const text = typeof value === 'string' ? value.trim() : '';
@@ -217,6 +224,7 @@ window.__ModuleLoader__.load({
         activeCardId: null,
         activePresetId: null,
         theme: 'light',
+        messageFont: 'preset',
         presetOverrides: {},
         presetScriptEdits: {},
         scriptOverrides: {},
@@ -248,6 +256,7 @@ window.__ModuleLoader__.load({
           ...parsed,
           version: 3,
           theme: PANEL_THEMES.some(({ id }) => id === parsed.theme) ? parsed.theme : seeds.theme,
+          messageFont: Object.hasOwn(ttLib()['message-html'].MESSAGE_FONTS, parsed.messageFont) ? parsed.messageFont : seeds.messageFont,
           cards: merge(seeds.cards, parsed.cards),
           presets: merge(seeds.presets, parsed.presets),
           lorebooks: merge(seeds.lorebooks, parsed.lorebooks),
@@ -611,7 +620,7 @@ window.__ModuleLoader__.load({
       return nodes;
     }
 
-    function MessageFrame({ html, context, onCompose, shareRpgHost }) {
+    function MessageFrame({ html, context, onCompose, shareRpgHost, font }) {
       const frameRef = useRef(null);
       const serializedContext = context ? JSON.stringify(context) : '';
       const srcDoc = useMemo(() => {
@@ -621,22 +630,26 @@ window.__ModuleLoader__.load({
           nonce,
           context: serializedContext ? JSON.parse(serializedContext) : null,
           vendorSource: TAVERN_VENDOR_SRC,
+          font,
         });
-      }, [html, serializedContext]);
+      }, [html, serializedContext, font]);
 
       useEffect(() => {
         const onFrameMessage = (event) => {
           const frame = frameRef.current;
           if (!frame || event.source !== frame.contentWindow) return;
           const data = event.data;
-          if (data?.type === 'dsh-tt:compose' && context?.compose && typeof data.text === 'string') {
-            const result = onCompose?.(data.text, data.send === true);
+          if (data?.type === 'dsh-tt:compose' && context?.compose) {
+            const action = typeof data.command === 'string'
+              ? ttLib()['card-assets-wasm'].cardAssetsWasm().planMessageAction(data.command)
+              : typeof data.text === 'string' ? { text: data.text, send: data.send === true } : null;
+            const result = action && onCompose?.(action.text, action.send, action.replace);
             if (Number.isSafeInteger(data.id)) {
               const reply = (ok) => frame.contentWindow?.postMessage({ type: 'dsh-tt:compose-result', id: data.id, ok }, '*');
               Promise.resolve(result).then((ok) => reply(ok === true), () => reply(false));
             }
           }
-          if (data?.type === 'dsh-tt:message-height' && Number.isFinite(data.height)) {
+          if ((data?.type === 'dsh-tt:message-height' || (context && data?.type === 'resizeIframe')) && Number.isFinite(data.height)) {
             frame.style.height = `${Math.max(24, Math.min(1200, data.height))}px`;
           }
         };
@@ -654,21 +667,24 @@ window.__ModuleLoader__.load({
     function renderMarkdown(message, keyBase, display) {
       const { text: source, slots } = message;
       if (!source) return null;
-      const { splitMessageBlocks, assistantProse } = ttLib()['message-html'];
-      const blocks = splitMessageBlocks(source);
+      const { splitMessageBlocks, assistantProse, roleplayMessageBlocks } = ttLib()['message-html'];
+      const blocks = display ? roleplayMessageBlocks(source) : splitMessageBlocks(source);
       return blocks.flatMap((block, bi) => {
         const key = `${keyBase}-${bi}`;
         if (block.type === 'html' && display) {
-          const trustedLiteral = display.literals.has(block.text);
-          const context = display.greeting || trustedLiteral || slots.has(block.text) ? display.context : null;
+          const inline = inlineRpgDisplay(block.text);
+          if (inline !== null) return h('div', { key, className: 'tt-inline-rpg', dangerouslySetInnerHTML: { __html: inline } });
+          const fromTemplate = slots.has(block.text);
+          const trustedLiteral = fromTemplate && display.literals?.has(block.text);
+          const context = display.greeting || fromTemplate ? display.context : null;
           // The shipped RPG template reads a synchronous API from its parent just
           // like a TH script. Only an exact static replacement from a loaded asset
           // may share that origin; model text and capture-based templates stay opaque.
           const shareRpgHost = display.rpgHost && trustedLiteral && /\bwindow\.parent\.DreamRpg\b/.test(block.text);
-          return h(MessageFrame, { key, html: block.text, context, shareRpgHost, onCompose: display.onCompose });
+          return h(MessageFrame, { key, html: block.text, context, shareRpgHost, onCompose: display.onCompose, font: display.font });
         }
         if (block.type !== 'text') return h('pre', { key }, h('code', null, block.text));
-        const prose = message.assistant ? assistantProse(block.text) : block.text;
+        const prose = !display && message.assistant ? assistantProse(block.text) : block.text;
         return prose.trim().split(/\n{2,}/).filter(Boolean).map((paragraph, index) => {
           const paragraphKey = `${key}-${index}`;
           if (/^>\s?/.test(paragraph)) {
@@ -679,7 +695,7 @@ window.__ModuleLoader__.load({
       });
     }
 
-    function displayMessage(text, rules, placement, depth, variables, templates) {
+    function displayMessage(text, rules, placement, depth, variables, templates, roleplay) {
       const lib = ttLib();
       const markers = new Map();
       let prefix;
@@ -688,14 +704,20 @@ window.__ModuleLoader__.load({
       const output = lib.regex.applyRegexScripts(source, rules, placement, {
         depth,
         replaceRule(input, re, rule) {
-          const template = templates.get(rule);
+          const template = roleplay ? templates.get(rule) : null;
           const replacement = String(rule.replaceString ?? '');
           if (!template) return input.replace(re,
-            assistant ? lib['message-html'].fenceDisplayFragment(replacement) : replacement);
-          return input.replace(re, (match, capture) => {
-            if (typeof capture !== 'string') return match;
-            const safeHtml = expandDisplaySlot(template, capture, lib['card-assets-wasm'].cardAssetsWasm());
+            assistant || roleplay ? lib['message-html'].fenceDisplayFragment(replacement) : replacement);
+          const groupedChoices = template.kind === 'literal' && rule.findRegex === '<fox_selc>[\\s\\S]*?<\\/fox_selc>';
+          const wasm = lib['card-assets-wasm'].cardAssetsWasm();
+          const source = groupedChoices ? (wasm.normalizeGroupedChoices(input) ?? input) : input;
+          let placed = false;
+          return source.replace(re, (match, capture) => {
+            if (groupedChoices && placed) return '';
+            if (template.kind !== 'literal' && typeof capture !== 'string') return match;
+            const safeHtml = expandDisplaySlot(template, capture, wasm);
             if (safeHtml === null) return match;
+            placed = true;
             prefix ||= `\u0000DSH-TT:${crypto.randomUUID()}:`;
             const marker = prefix + markers.size + '\u0000';
             markers.set(marker, safeHtml);
@@ -727,7 +749,7 @@ window.__ModuleLoader__.load({
       const shimLiteral = JSON.stringify(String(TAVERN_SHIM_SRC)).replace(/</g, '\\u003c');
       return [
         '<!doctype html><html><head><meta charset="utf-8">',
-        '<style>:root{color-scheme:light dark}html,body{margin:0;padding:0;background:Canvas;color:CanvasText;font:13px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}',
+        '<style>:root{color-scheme:light dark}html,body{margin:0;padding:0;background:transparent;color:CanvasText;font:13px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}',
         '#tt-fallback{padding:24px;font-size:12px;color:#888;}',
         '.TH-toastr{}</style>',
         init.extensions?.length ? `<script type="importmap">${JSON.stringify(extensionImportMap(init.extensions)).replace(/</g, '\\u003c')}<\/script>` : '',
@@ -762,8 +784,9 @@ window.__ModuleLoader__.load({
       const frame = document.createElement('iframe');
       frame.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms allow-modals allow-downloads');
       frame.setAttribute('title', '酒馆助手脚本宿主');
-      frame.style.cssText = 'width:100%;height:100%;border:0;display:block;background:var(--tt-surface);';
+      frame.style.cssText = 'width:100%;height:100%;border:0;display:block;';
       frame.srcdoc = buildTavernSrcdoc(init);
+      const stopFloatingUi = observeFloatingScriptUi(frame);
       container.appendChild(frame);
 
       const emitLog = (level, text) => { try { onLog(level, text); } catch { /* ignore */ } };
@@ -901,8 +924,8 @@ window.__ModuleLoader__.load({
           if (disposed) return;
           try { frame.contentWindow.postMessage({ __ttParent: true, type: 'settings', value }, '*'); } catch { /* ignore */ }
         },
-        updatePresetViews(views) {
-          if (!disposed) frame.contentWindow?.postMessage({ __ttParent: true, type: 'preset-views', views }, '*');
+        updatePresetViews(views, regexScripts) {
+          if (!disposed) frame.contentWindow?.postMessage({ __ttParent: true, type: 'preset-views', views, regexScripts }, '*');
         },
         popupResult(id, result) {
           if (disposed) return;
@@ -915,6 +938,7 @@ window.__ModuleLoader__.load({
           generations.clear();
           for (const settle of promptWaits.values()) settle([]);
           for (const settle of slashWaits.values()) settle({ isError: true, errorMessage: '扩展会话已切换' });
+          stopFloatingUi();
           window.removeEventListener('message', onMessageFromChild);
           try { frame.remove(); } catch { /* ignore */ }
         },
@@ -945,6 +969,7 @@ window.__ModuleLoader__.load({
       const [greetingPick, setGreetingPick] = useState(null);
       const [thReady, setThReady] = useState(false);
       const [thShow, setThShow] = useState(false);
+      const [scriptToolsOpen, setScriptToolsOpen] = useState(false);
       const [thReload, setThReload] = useState(0);
       const [thButtons, setThButtons] = useState([]);
       const [loreBookId, setLoreBookId] = useState('card');
@@ -957,6 +982,7 @@ window.__ModuleLoader__.load({
       const [previewCopyHint, setPreviewCopyHint] = useState('');
       const [selfTest, setSelfTest] = useState(null);
       const [drawerOpen, setDrawerOpen] = useState(false);
+      const [showSessions, setShowSessions] = useState(true);
       const [scrolledAway, setScrolledAway] = useState(false);
       const [sending, setSending] = useState(false);
       const [clearVarsConfirm, setClearVarsConfirm] = useState(null);
@@ -1233,6 +1259,10 @@ window.__ModuleLoader__.load({
         const key = `${kind}:${item.id}`;
         if (assetCacheRef.current.has(key)) return assetCacheRef.current.get(key);
         let data = item.raw || null;
+        if (!data && item.source === 'import') {
+          try { data = await importedAssetPayload(item.id); }
+          catch (error) { log(`读取导入资产失败 ${item.name}：${error?.message || error}`); }
+        }
         if (!data && item.filePath && bridge?.hasFiles) {
           if (sessionId) {
             try {
@@ -1280,7 +1310,7 @@ window.__ModuleLoader__.load({
         if (!activePreset) return null;
         const raw = assetCacheRef.current.get(`preset:${activePreset.id}`) || activePreset.raw || null;
         const edits = store.presetScriptEdits?.[activePreset.id];
-        return raw && edits ? { ...raw, ...edits } : raw;
+        return raw && edits ? ttLib()['tavern-preset'].applyTavernPresetScriptEdit(raw, edits) : raw;
         // eslint-disable-next-line react-hooks/exhaustive-deps
       }, [activePreset, assetTick, store.presetScriptEdits]);
       const activePresetRaw = useMemo(() => {
@@ -1291,8 +1321,8 @@ window.__ModuleLoader__.load({
       }, [activePresetSaved, activePreset?.id, activeId, assetTick]);
       const displayRules = useMemo(() => ttLib().regex.collectRegexRules(activeCardRaw, activePresetRaw),
         [activeCardRaw, activePresetRaw]);
-      const alternateOpenings = useMemo(() => greetingOptionsOf(activeCardRaw).filter(({ id }) => id !== 'first'),
-        [activeCardRaw]);
+      const openingOptions = useMemo(() => greetingOptionsOf(activeCardRaw), [activeCardRaw]);
+      const alternateOpenings = openingOptions.filter(({ id }) => id !== 'first');
 
       useEffect(() => {
         if (activeCard && !assetCacheRef.current.has(`card:${activeCard.id}`)) ensureCard(activeCard);
@@ -1392,7 +1422,7 @@ window.__ModuleLoader__.load({
           const created = await bridge.create('roleplay');
           const id = created?.sessionId ?? created?.id ?? created?.address?.sessionId ?? null;
           if (!id) { log('已创建会话但没拿到 id：' + JSON.stringify(created).slice(0, 240)); return; }
-          const greeting = greetingText ?? greetingOptionsOf(await ensureCard(card, id))[0]?.text ?? '';
+          const greeting = greetingText ?? authorGreetingOf(await ensureCard(card, id));
           switchConversation(id);
           if (created?.sessionId) await bridge.rename(id, title).catch(() => {});
           setView('chat');
@@ -1508,6 +1538,7 @@ window.__ModuleLoader__.load({
 
       useEffect(() => {
         setThButtons([]);
+        setScriptToolsOpen(false);
         setExtensionStatus({});
         const container = thFrameRef.current;
         if (!container || !bridge?.ok || !activeId || !isRoleplaySession || !activeCard || !activeCardRaw) {
@@ -1683,18 +1714,19 @@ window.__ModuleLoader__.load({
           onPresetWrite: (name, preset) => {
             if (!activePreset || !workingPreset || activeIdRef.current !== activeId || selectedPresetRef.current !== activePreset.id
               || (name !== 'in_use' && name !== init.presetName)) throw new Error('预设或会话已经切换');
-            const { tavernPresetView, tavernPresetPromptEdit } = ttLib()['tavern-preset'];
+            const { tavernPresetView, tavernPresetPromptEdit, applyTavernPresetScriptEdit } = ttLib()['tavern-preset'];
             const presetId = activePreset.id;
             if (name === 'in_use') {
-              workingPreset = { ...workingPreset, ...tavernPresetPromptEdit(workingPreset, preset) };
+              workingPreset = applyTavernPresetScriptEdit(workingPreset, tavernPresetPromptEdit(workingPreset, preset));
               const overrides = { ...presetOverridesRef.current };
               delete overrides[presetId];
               presetOverridesRef.current = overrides;
               patchStore({ presetOverrides: overrides });
             } else {
               const edits = tavernPresetPromptEdit(savedPreset, preset);
-              savedPreset = { ...savedPreset, ...edits };
-              patchStore((previous) => ({ presetScriptEdits: { ...previous.presetScriptEdits, [presetId]: edits } }));
+              savedPreset = applyTavernPresetScriptEdit(savedPreset, edits);
+              patchStore((previous) => ({ presetScriptEdits: { ...previous.presetScriptEdits,
+                [presetId]: applyTavernPresetScriptEdit(previous.presetScriptEdits?.[presetId] || {}, edits) } }));
             }
             // Keep the active copy isolated from named saves and visible to the
             // sender even when a script generates before React renders again.
@@ -1771,7 +1803,7 @@ window.__ModuleLoader__.load({
         if (thReady) log('TH 宿主就绪，脚本变量将随消息更新。');
         // eslint-disable-next-line react-hooks/exhaustive-deps
       }, [thReady]);
-      useEffect(() => { thHostRef.current?.updatePresetViews(presetViews); }, [presetViews]);
+      useEffect(() => { thHostRef.current?.updatePresetViews(presetViews, displayRules); }, [presetViews, displayRules]);
 
       const buildTavernChat = useCallback((greetingText, floorList, messageVars, overrides) => {
         const list = [];
@@ -2070,9 +2102,9 @@ window.__ModuleLoader__.load({
         }
       }, [activeId, busy, bridge, buildBinding, log, isRoleplaySession, scrollToLatest, pushToast]);
 
-      const composeFromMessage = useCallback((text, submit) => {
+      const composeFromMessage = useCallback((text, submit, replace) => {
         if (activeIdRef.current !== activeId || !isRoleplaySession || !text.trim()) return false;
-        const compose = (current) => [current.trim(), text.trim()].filter(Boolean).join('\n');
+        const compose = (current) => replace ? text.trim() : [current.trim(), text.trim()].filter(Boolean).join('\n');
         if (submit && !busy) return send(compose(draftRef.current));
         setDraft(compose);
         return !submit;
@@ -2086,36 +2118,35 @@ window.__ModuleLoader__.load({
           try {
             const json = await readCardFile(file);
             const kind = classifyJson(json);
+            const assetKind = kind === 'lorebook' ? 'lore' : kind === 'preset' ? 'preset' : 'card';
+            const id = `${assetKind}-${crypto.randomUUID()}`;
+            await importedAssetPayload(id, json);
+            assetCacheRef.current.set(`${assetKind}:${id}`, json);
             if (kind === 'preset') {
-              const id = `preset-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
               patchStore((prev) => ({
                 presets: [...prev.presets, {
                   id,
                   name: json.name || file.name,
                   counts: { prompts: presetPrompts(json).length, enabled: presetOrderSlots(json).filter((slot) => slot.enabled !== false).length },
                   source: 'import',
-                  raw: json,
                   hash: hashJson(json),
                 }],
                 ...(!prev.activePresetId ? presetSelection(prev, id, presetSessionId, activeCard?.id) : {}),
               }));
               log(`已导入预设 ${json.name || file.name}`);
             } else if (kind === 'lorebook') {
-              const id = `book-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
               const entries = bookEntries(json);
-              patchStore({
-                lorebooks: [...store.lorebooks, {
+              patchStore((prev) => ({
+                lorebooks: [...prev.lorebooks, {
                   id,
                   name: json.name || file.name,
                   counts: { entries: entries.length, constant: entries.filter((entry) => entry.constant).length },
                   source: 'import',
-                  raw: json,
                 }],
-              });
+              }));
               log(`已导入世界书 ${json.name || file.name}`);
             } else {
               const inner = innerOf(json);
-              const id = `card-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
               const card = {
                 id,
                 name: inner.name || file.name,
@@ -2128,20 +2159,17 @@ window.__ModuleLoader__.load({
                 },
                 worldName: inner.character_book?.name ?? '',
                 source: 'import',
-                raw: json,
                 hash: hashJson(json),
               };
-              const next = { cards: [...store.cards, card], activeCardId: card.id };
-              assetCacheRef.current.set(`card:${id}`, json);
-              patchStore(next);
-              setAssetTick((tick) => tick + 1);
+              patchStore((prev) => ({ cards: [...prev.cards, card], activeCardId: id }));
               log(`已导入角色卡 ${card.name}`);
             }
           } catch (error) {
             log(`导入失败 ${file.name}：${error?.message || error}`);
+            pushToast('error', `${file.name}：${error?.message || error}`, '导入失败');
           }
         }
-      }, [store, patchStore, log, presetSessionId, activeCard?.id]);
+      }, [patchStore, log, pushToast, presetSessionId, activeCard?.id]);
 
       const exportActive = useCallback(async (kind) => {
         const asset = kind === 'preset' ? activePreset : activeCard;
@@ -2157,6 +2185,7 @@ window.__ModuleLoader__.load({
       }, [activePreset, activeCard, ensurePreset, ensureCard, log]);
 
       // ── 渲染 ──────────────────────────────────────────────────
+      const messageFonts = ttLib()['message-html'].MESSAGE_FONTS;
       const literalDisplays = useMemo(() => ttLib()['message-html'].literalAssetDisplays(displayRules), [displayRules]);
       const dynamicDisplays = useMemo(() => compileDisplaySlots(displayRules, ttLib()['message-html']), [displayRules]);
 
@@ -2166,22 +2195,24 @@ window.__ModuleLoader__.load({
         if (greeting) {
           const rawGreeting = (thState.overrides?.[activeId] || {})[0] || greeting;
           const greetingVars = { ...((thState.messages?.[activeId] || {})[0] || ttVars) };
-          const greetingText = displayMessage(rawGreeting, displayRules, 2, floors.length, greetingVars, dynamicDisplays);
+          const greetingText = displayMessage(rawGreeting, displayRules, 2, floors.length, greetingVars, dynamicDisplays, isRoleplaySession);
           const display = isRoleplaySession && {
-            greeting: true, rpgHost, context: { index: 0, variables: greetingVars, compose: true }, literals: literalDisplays,
+            greeting: true, rpgHost, font: store.messageFont, literals: literalDisplays,
+            context: { index: 0, variables: greetingVars, compose: true,
+              message: { message_id: 0, role: 'assistant', name: activeCard?.name, message: rawGreeting, is_hidden: false } },
             onCompose: composeFromMessage,
           };
-          nodes.push(h('article', { key: 'greeting', className: 'tt-fl', mesid: isRoleplaySession ? '0' : undefined },
+          nodes.push(h('article', { key: 'greeting', className: isRoleplaySession ? 'tt-fl mes' : 'tt-fl', mesid: isRoleplaySession ? '0' : undefined },
             h('div', { className: 'tt-av', 'aria-hidden': true }, String(activeCard?.name ?? 'AI').slice(0, 1)),
             h('div', { className: 'tt-msg-content tt-opening' },
               h('header', { className: 'tt-meta' },
                 h('span', null, h('b', null, activeCard?.name ?? '角色'), ' · 开场白'),
                 canChooseOpening ? h('button', {
-                  className: 'tt-btn tt-primary', disabled: busy,
-                  onClick: () => setGreetingPick({ card: activeCard, options: alternateOpenings, sessionId: activeId }),
-                }, alternateOpenings.some((option) => option.text === greeting) ? '更换剧情开场' : '开始剧情') : null,
+                  className: 'tt-btn', disabled: busy,
+                  onClick: () => setGreetingPick({ card: activeCard, options: openingOptions, sessionId: activeId }),
+                }, '切换开场白') : null,
               ),
-              h('div', { className: 'tt-bub' }, renderMarkdown(greetingText, 'greeting', display)),
+              h('div', { className: isRoleplaySession ? 'tt-bub mes_text' : 'tt-bub' }, renderMarkdown(greetingText, 'greeting', display)),
             ),
           ));
         }
@@ -2191,26 +2222,33 @@ window.__ModuleLoader__.load({
           const varIndex = floorIndex + greetingOffset;
           const override = (thState.overrides?.[activeId] || {})[varIndex] || null;
           const floorVars = { ...((thState.messages?.[activeId] || {})[varIndex] || ttVars) };
-          const placement = floor.role === 'user' ? 1 : 2;
-          const text = displayMessage(override || floor.text, displayRules, placement, floors.length - 1 - floorIndex, floorVars, dynamicDisplays);
-          const display = isRoleplaySession && floor.role === 'assistant' && {
-            rpgHost, context: { index: varIndex, variables: floorVars, compose: true }, literals: literalDisplays,
+          const user = floor.role === 'user';
+          const name = user ? '你' : (activeCard?.name ?? '角色');
+          const rawText = override || floor.text;
+          const placement = user ? 1 : 2;
+          const text = displayMessage(rawText, displayRules, placement, floors.length - 1 - floorIndex, floorVars, dynamicDisplays, isRoleplaySession);
+          const display = isRoleplaySession && {
+            rpgHost, font: store.messageFont, literals: literalDisplays,
+            context: { index: varIndex, variables: floorVars, compose: true,
+              message: { message_id: varIndex, role: floor.role, name, message: rawText, is_hidden: false } },
             onCompose: composeFromMessage,
           };
-          const user = floor.role === 'user';
-          nodes.push(h('article', { key: floor.replyKey || floor.id, className: 'tt-fl' + (user ? ' user' : ''), mesid: isRoleplaySession ? String(varIndex) : undefined },
+          const body = renderMarkdown(text, floor.id, display);
+          if (display && !body?.length && (user || !floor.reasoning)) return;
+          nodes.push(h('article', { key: floor.replyKey || floor.id,
+            className: 'tt-fl' + (user ? ' user' : '') + (isRoleplaySession ? ' mes' : ''), mesid: isRoleplaySession ? String(varIndex) : undefined },
             user ? null : h('div', { className: 'tt-av', 'aria-hidden': true }, String(activeCard?.name ?? 'AI').slice(0, 1)),
             h('div', { className: 'tt-msg-content' },
-              h('header', { className: 'tt-meta' }, h('b', null, user ? '你' : (activeCard?.name ?? '角色')),
+              h('header', { className: 'tt-meta' }, h('b', null, name),
                 floor.time ? h('span', null, new Date(floor.time).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })) : null),
               user ? null : h(AssistantReasoning, { text: floor.reasoning }),
-              h('div', { className: 'tt-bub' }, renderMarkdown(text, floor.id, display)),
+              body?.length ? h('div', { className: isRoleplaySession ? 'tt-bub mes_text' : 'tt-bub' }, body) : null,
             ),
           ));
         });
         return nodes;
-      }, [view, activeId, activeCard, alternateOpenings, busy, canChooseOpening, composeFromMessage, displayRules,
-        dynamicDisplays, floors, greeting, isRoleplaySession, literalDisplays, rpgHost, thState.messages, thState.overrides, ttVars]);
+      }, [view, activeId, activeCard, openingOptions, busy, canChooseOpening, composeFromMessage, displayRules,
+        dynamicDisplays, floors, greeting, isRoleplaySession, literalDisplays, rpgHost, store.messageFont, thState.messages, thState.overrides, ttVars]);
 
       const visibleSessions = useMemo(() => {
         const query = sessionSearch.trim().toLocaleLowerCase();
@@ -2280,7 +2318,8 @@ window.__ModuleLoader__.load({
         pushToast('success', '会话名称已更新。');
       });
 
-      const sidebar = h('aside', { className: 'tt-side', 'aria-label': '会话和页面' },
+      const navigation = h(PanelNavigation, { view, onNavigate: navigate });
+      const sidebar = h('aside', { id: 'tt-session-sidebar', className: 'tt-side', 'aria-label': archiveView ? '归档记录' : '会话列表' },
         h('div', { className: 'tt-side-head' },
           h('div', { className: 'tt-session-toolbar' },
             h('div', { className: 'tt-side-label' }, archiveView ? '归档记录' : '会话'),
@@ -2329,7 +2368,6 @@ window.__ModuleLoader__.load({
               pushToast('success', '会话已恢复。');
             }),
           }) : h('div', { className: 'tt-empty' }, sessionSearch.trim() ? '没有匹配的会话' : archiveView ? '还没有归档会话' : '还没有对话')),
-        h(PanelNavigation, { view, onNavigate: navigate }),
       );
 
       const canSend = Boolean(isRoleplaySession && activeId && bridge?.ok);
@@ -2347,7 +2385,7 @@ window.__ModuleLoader__.load({
       const chatPane = view === 'chat' ? h('section', { className: 'tt-chat-pane', 'aria-label': '对话内容' },
         h('div', { className: 'tt-timeline' },
           h('div', { className: 'tt-chat', ref: scrollRef, onScroll: trackScroll },
-            h('div', { className: 'tt-thread', ref: threadRef }, !floors.length && !greeting && !liveNode
+            h('div', { className: 'tt-thread', id: isRoleplaySession ? 'chat' : undefined, ref: threadRef }, !renderedFloors.length && !liveNode
               ? h('div', { className: 'tt-chat-empty' },
                 h('div', { className: 'tt-empty-mark', 'aria-hidden': true }, h('span', { className: 'tt-glyph i-chat' })),
                 h('h2', null, canSend ? '开始对话' : activeId ? '这个会话还没有消息' : activeCard ? '与「' + activeCard.name + '」开始对话' : '选择角色，开始对话'),
@@ -2370,7 +2408,6 @@ window.__ModuleLoader__.load({
       ) : null;
 
       const cardsPane = h('div', { className: 'tt-pane' },
-        h('h2', { className: 'tt-h' }, '角色卡'),
         h('p', { className: 'tt-sub' }, '支持导入 Character Card V2/V3 的 PNG 和 JSON。'),
         h('div', { className: 'tt-inline', style: { marginBottom: '14px' } },
           h(ToolButton, { icon: 'import', label: '导入角色卡', className: 'tt-tool-primary', onClick: () => importCardRef.current?.click() }),
@@ -2427,7 +2464,6 @@ window.__ModuleLoader__.load({
       }, [activeLoreBook, loreSearch, assetTick]);
 
       const lorePane = h('div', { className: 'tt-pane' },
-        h('h2', { className: 'tt-h' }, '世界书'),
         h('p', { className: 'tt-sub' }, '查看条目，或为当前会话绑定一份独立世界书。'),
         isRoleplaySession ? h('label', { className: 'tt-inline', style: { marginBottom: '10px' } },
           '本局世界书',
@@ -2512,7 +2548,6 @@ window.__ModuleLoader__.load({
       }, [activePreset?.id]);
 
       const presetsPane = h('div', { className: 'tt-pane' },
-        h('h2', { className: 'tt-h' }, '预设'),
         h('p', { className: 'tt-sub' }, '导入 ST 预设 JSON（全量保留字段），查看 prompt 顺序并逐条启停。'),
         h('div', { className: 'tt-inline', style: { marginBottom: '12px' } },
           h(ToolButton, { icon: 'import', label: '导入预设', className: 'tt-tool-primary', onClick: () => importPresetRef.current?.click() }),
@@ -2575,8 +2610,8 @@ window.__ModuleLoader__.load({
 
       const statData = ttVars?.stat_data && typeof ttVars.stat_data === 'object' ? ttVars.stat_data : null;
 
+      const scriptButtonsById = new Map(thButtons.map(({ id, names }) => [id, [...new Set(names)]]));
       const extPane = h('div', { className: 'tt-pane' },
-        h('h2', { className: 'tt-h' }, '扩展'),
         h('div', { className: 'tt-section' }, '第三方扩展'),
         h('form', { className: 'tt-inline', onSubmit: (event) => {
           event.preventDefault();
@@ -2616,7 +2651,7 @@ window.__ModuleLoader__.load({
         h('div', { className: 'tt-section' }, `酒馆助手脚本（${enabledScripts.length}/${configuredScripts.length} 启用）`),
         configuredScripts.map((entry) => {
           const { script, assetKey, source } = entry;
-          const visibleButtons = thReady && scriptEnabled(entry) ? thButtons.find((row) => row.id === script.id)?.names : null;
+          const visibleButtons = thReady && scriptEnabled(entry) ? scriptButtonsById.get(script.id) : null;
           return h('div', { key: `${assetKey}:${script.id}`, className: 'tt-line' },
             h('div', { className: 'tt-grow' },
               h('b', null, script.name || script.id),
@@ -2625,7 +2660,7 @@ window.__ModuleLoader__.load({
                 Array.isArray(script.button?.buttons) && script.button.buttons.length ? ` · ${script.button.buttons.length} 个按钮` : '',
                 script.enabled === false ? ' · 默认停用' : '',
               ),
-              visibleButtons?.length ? h('div', { className: 'tt-inline' }, [...new Set(visibleButtons)].map((name) => h('button', {
+              visibleButtons?.length ? h('div', { className: 'tt-inline' }, visibleButtons.map((name) => h('button', {
                 key: name, className: 'tt-btn', onClick: () => thHostRef.current?.clickScriptButton(script.id, name),
               }, name))) : null,
             ),
@@ -2651,9 +2686,14 @@ window.__ModuleLoader__.load({
 
       // ── 设置 ──────────────────────────────────────────────────
       const settingsPane = h('div', { className: 'tt-pane' },
-        h('h2', { className: 'tt-h' }, '设置与诊断'),
         h(ThemePicker, { value: store.theme, onChange: (theme) => patchStore({ theme }) }),
-        h('h3', { className: 'tt-section' }, '诊断'),
+        h('label', { className: 'tt-inline tt-message-font-picker' },
+          '正文与楼层默认字体',
+          h('select', { className: 'tt-search', value: store.messageFont,
+            onChange: (event) => patchStore({ messageFont: event.target.value }) },
+          Object.entries(messageFonts).map(([id, { label }]) => h('option', { key: id, value: id }, label))),
+        ),
+        h('h2', { className: 'tt-section' }, '诊断'),
         h('div', { className: 'tt-inline', style: { marginBottom: '10px' } },
           h(ToolButton, { icon: 'refresh', label: '重新读取会话', onClick: refreshSessions }),
           h(ToolButton, { icon: 'trash', label: '清空诊断', onClick: () => setDiag([]) }),
@@ -2780,7 +2820,6 @@ window.__ModuleLoader__.load({
       };
 
       const previewPane = h('div', { className: 'tt-pane' },
-        h('h2', { className: 'tt-h' }, '发送前预览'),
         h('p', { className: 'tt-sub' },
           '显示 Rust 组装后的消息。模型供应商可能会调整它不支持的消息角色。'),
         previewBody());
@@ -2809,7 +2848,6 @@ window.__ModuleLoader__.load({
       }[Number(value)] || String(value));
 
       const regexPane = h('div', { className: 'tt-pane' },
-        h('h2', { className: 'tt-h' }, '正则脚本'),
         h('p', { className: 'tt-sub' },
           '显示正则在面板渲染时生效。提示词正则处理用户输入和世界书，辅助生成也会处理助手历史。'),
         regexState.status === 'error'
@@ -2894,13 +2932,7 @@ window.__ModuleLoader__.load({
         ),
       ) : null;
 
-      const header = h('header', { className: 'tt-top' },
-        h('div', { className: 'tt-heading' },
-          compact ? h(ToolButton, { icon: 'menu', label: '会话与页面', expanded: drawerOpen,
-            onClick: () => setDrawerOpen(true) }) : null,
-          h('h1', { className: 'tt-brand' }, view === 'chat' ? '对话' : '角色扮演'),
-        ),
-        h('div', { className: 'tt-context', 'aria-label': '角色、预设和模型' },
+      const chatOptions = h(ChatOptions, null,
           h('label', { className: 'tt-chip' },
             h('span', null, '角色'),
             h('select', {
@@ -2941,15 +2973,50 @@ window.__ModuleLoader__.load({
               return h('option', { key: value, value }, String(label));
             })),
           ),
+      );
+      const heading = view === 'chat' && activeSession ? sessionTitle(activeSession) : PANEL_TITLES[view];
+      const header = h('header', { className: 'tt-top' },
+        h('div', { className: 'tt-heading' },
+          compact ? h(ToolButton, { icon: 'menu', label: '会话与页面', expanded: drawerOpen,
+            controls: drawerOpen ? 'tt-navigation' : undefined, onClick: () => setDrawerOpen(true) })
+            : h(ToolButton, { icon: 'sidebar', label: showSessions ? '收起会话列表' : '展开会话列表',
+              expanded: showSessions, controls: showSessions ? 'tt-session-sidebar' : undefined,
+              onClick: () => setShowSessions((visible) => !visible) }),
+          h('h1', { className: 'tt-brand', title: heading }, heading),
+        ),
+        h('div', { className: 'tt-top-tools' },
+          view === 'chat' && isRoleplaySession && (enabledScripts.length || enabledExtensions.length) ? h(ToolButton, {
+            icon: 'extensions', label: '脚本工具', expanded: scriptToolsOpen,
+            onClick: () => setScriptToolsOpen(true),
+          }) : null,
+          chatOptions,
         ),
       );
 
-      return h('div', { className: 'tt-root' + (compact ? ' compact' : ''), 'data-tt-theme': store.theme, ref: rootRef },
+      return h('div', { className: 'tt-root' + (compact ? ' compact' : ''), 'data-tt-theme': store.theme, ref: rootRef,
+        style: { '--tt-message-font': (messageFonts[store.messageFont] || messageFonts.preset).family } },
         h('style', null, CSS),
-        compact ? null : sidebar,
-        h('main', { className: 'tt-main' }, header, pane),
-        compact && drawerOpen ? h(PanelDialog, { id: 'tt-navigation', title: archiveView ? '归档记录' : '会话与页面', drawer: true,
-          onDismiss: () => setDrawerOpen(false) }, sidebar) : null,
+        compact ? null : navigation,
+        !compact && showSessions ? sidebar : null,
+        h('main', { className: 'tt-main' }, header, h(React.Fragment, { key: view }, pane)),
+        compact && drawerOpen ? h(PanelDialog, { id: 'tt-navigation', title: '会话与页面', drawer: true,
+          onDismiss: () => setDrawerOpen(false) }, navigation, sidebar) : null,
+        scriptToolsOpen ? h(PanelDialog, { id: 'tt-script-tools', title: '脚本工具', onDismiss: () => setScriptToolsOpen(false) },
+          enabledScripts.map(({ script }) => {
+            const names = scriptButtonsById.get(script.id);
+            return names?.length ? h('div', { key: script.id, className: 'tt-script-actions', role: 'group', 'aria-label': script.name || script.id },
+              h('b', null, script.name || script.id),
+              h('div', { className: 'tt-inline' }, names.map((name) => h('button', { key: name, className: 'tt-btn', onClick: () => {
+                setScriptToolsOpen(false);
+                thHostRef.current?.clickScriptButton(script.id, name);
+              } }, name))),
+            ) : null;
+          }),
+          h('div', { className: 'tt-dialog-actions' },
+            h('button', { className: 'tt-btn', onClick: () => { setScriptToolsOpen(false); setThShow(true); } }, '打开扩展与脚本界面'),
+            h('button', { className: 'tt-btn', onClick: () => setScriptToolsOpen(false) }, '关闭'),
+          ),
+        ) : null,
         h('div', { className: 'tt-thframe' + (thShow ? ' on' : '') },
           h('div', { className: 'tt-thbar' },
             h('span', null, '酒馆助手脚本界面'),

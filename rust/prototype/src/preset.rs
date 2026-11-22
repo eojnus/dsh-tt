@@ -195,5 +195,30 @@ pub fn script_edit(input: &Value) -> Result<Value, &'static str> {
         }
         prompts.push(prompt);
     }
-    Ok(json!({"prompts": prompts, "order": order}))
+    let mut result = json!({"prompts": prompts, "order": order});
+    if let Some(rules) = input["view"]["extensions"].get("regex_scripts") {
+        if !rules.is_array() {
+            return Err("预设正则必须是数组");
+        }
+        if *rules != input["original_regex"] {
+            result["extensions"] = json!({"regex_scripts": rules});
+        }
+    }
+    let settings = &input["view"]["settings"];
+    let mut patch = serde_json::Map::new();
+    for (name, key) in [
+        ("max_context", "openai_max_context"),
+        ("max_completion_tokens", "openai_max_tokens"),
+        ("temperature", "temp_openai"),
+        ("top_p", "top_p_openai"),
+    ] {
+        if settings[name].is_number() {
+            patch.insert(key.into(), settings[name].clone());
+        }
+    }
+    if let Some(stream) = settings["should_stream"].as_bool() {
+        patch.insert("stream_openai".into(), json!(stream));
+    }
+    result["settings"] = Value::Object(patch);
+    Ok(result)
 }

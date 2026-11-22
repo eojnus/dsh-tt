@@ -33,17 +33,21 @@ function AssistantReasoning({ text, active }: { text?: string; active?: boolean 
 }
 
 const PANEL_NAV = [
-  { label: '使用', pages: [['chat', '对话'], ['cards', '角色卡'], ['lore', '世界书'], ['presets', '预设']] },
+  { label: '会话与资料', pages: [['chat', '对话'], ['cards', '角色卡'], ['lore', '世界书'], ['presets', '预设']] },
   { label: '工具', pages: [['preview', '提示词预览'], ['regex', '正则'], ['extensions', '扩展'], ['settings', '设置与诊断']] },
 ];
 
-function ToolButton({ icon, label, className, disabled, pressed, expanded, current, initialFocus, onClick, type = 'button' }: {
+const PANEL_TITLES: Record<string, string> = Object.fromEntries(PANEL_NAV.flatMap(({ pages }) => pages));
+PANEL_TITLES.preview = '发送前预览';
+PANEL_TITLES.regex = '正则脚本';
+
+function ToolButton({ icon, label, id, className, disabled, pressed, expanded, controls, current, initialFocus, onClick, type = 'button' }: {
   icon: string; label: string; className?: string; disabled?: boolean; pressed?: boolean;
-  expanded?: boolean; current?: 'page'; initialFocus?: boolean; onClick?: () => void; type?: 'button' | 'submit';
+  id?: string; expanded?: boolean; controls?: string; current?: 'page'; initialFocus?: boolean; onClick?: () => void; type?: 'button' | 'submit';
 }) {
   return h('button', {
-    type, className: `tt-tool${className ? ' ' + className : ''}`,
-    title: label, 'aria-label': label, 'aria-pressed': pressed, 'aria-expanded': expanded, 'aria-current': current,
+    id, type, className: `tt-tool${className ? ' ' + className : ''}`,
+    title: label, 'aria-label': label, 'aria-pressed': pressed, 'aria-expanded': expanded, 'aria-controls': controls, 'aria-current': current,
     disabled, onClick, 'data-tt-dialog-focus': initialFocus ? '' : undefined,
   }, h('span', { className: `tt-glyph i-${icon}`, 'aria-hidden': true }));
 }
@@ -64,8 +68,7 @@ function useCompactPanel(root: NodeRef<HTMLElement>) {
 
 function PanelNavigation({ view, onNavigate }: { view: string; onNavigate: (view: string) => void }) {
   return h('nav', { className: 'tt-nav', 'aria-label': '角色扮演页面' }, PANEL_NAV.map((group) =>
-    h('div', { className: 'tt-nav-group', key: group.label },
-      h('div', { className: 'tt-nav-label' }, group.label),
+    h('div', { className: 'tt-nav-group', role: 'group', 'aria-label': group.label, key: group.label },
       group.pages.map(([key, label]) => h(ToolButton, {
         key, icon: key, label, className: view === key ? 'on' : undefined,
         current: view === key ? 'page' : undefined,
@@ -73,6 +76,101 @@ function PanelNavigation({ view, onNavigate }: { view: string; onNavigate: (view
       })),
     ),
   ));
+}
+
+function ChatOptions({ children }: { children: PanelContent[] }) {
+  return h('details', {
+    className: 'tt-chat-options',
+    onBlur(event: { currentTarget: HTMLDetailsElement; relatedTarget: Node | null }) {
+      if (!event.currentTarget.contains(event.relatedTarget)) event.currentTarget.open = false;
+    },
+    onKeyDown(event: { key: string; currentTarget: HTMLDetailsElement; preventDefault(): void }) {
+      if (event.key !== 'Escape' || !event.currentTarget.open) return;
+      event.preventDefault();
+      event.currentTarget.open = false;
+      event.currentTarget.querySelector('summary')?.focus();
+    },
+  },
+    h('summary', { className: 'tt-tool', title: '对话选项', 'aria-label': '对话选项' },
+      h('span', { className: 'tt-glyph i-presets', 'aria-hidden': true })),
+    h('div', { className: 'tt-context', role: 'group', 'aria-label': '角色、预设和模型' }, children),
+  );
+}
+
+// Keep the trusted script document at layout size. Only the painted floating
+// regions of its iframe take pointer events away from the chat underneath.
+function observeFloatingScriptUi(frame: HTMLIFrameElement) {
+  let disconnect = () => {};
+  function connect() {
+    disconnect();
+    const doc = frame.contentDocument;
+    const win = frame.contentWindow;
+    if (!doc?.body || !win) return;
+    const { body, documentElement } = doc;
+    let pending: number | null = null;
+    let clip = '';
+    let measured = new Set<Element>();
+    const ignored = new Set(['script', 'style', 'link', 'template', 'meta']);
+    const schedule = () => { pending ??= requestAnimationFrame(update); };
+    const resize = new ResizeObserver(schedule);
+    const mutation = new MutationObserver(schedule);
+
+    function update() {
+      pending = null;
+      const width = documentElement.clientWidth;
+      const height = documentElement.clientHeight;
+      const surfaces = new Set<Element>();
+      const paths: string[] = [];
+      const nodes = Array.from(body.children, (node) => ({ node, floating: false }));
+      while (nodes.length) {
+        const entry = nodes.pop()!;
+        const { node } = entry;
+        if (ignored.has(node.localName)) continue;
+        const style = win.getComputedStyle(node);
+        if (style.display === 'none' || style.opacity === '0') continue;
+        const floating = entry.floating || style.position === 'fixed' || node.matches('dialog[open], [role="dialog"], [data-tt-mobile-surface]');
+        if (floating && style.visibility === 'visible' && style.pointerEvents !== 'none') {
+          const rect = node.getBoundingClientRect();
+          surfaces.add(node);
+          if (rect.width > 0 && rect.height > 0 && rect.right > 0 && rect.bottom > 0 && rect.left < width && rect.top < height) {
+            const left = Math.max(0, Math.floor(rect.left) - 6);
+            const top = Math.max(0, Math.floor(rect.top) - 6);
+            const right = Math.min(width, Math.ceil(rect.right) + 6);
+            const bottom = Math.min(height, Math.ceil(rect.bottom) + 6);
+            paths.push(`M${left} ${top}H${right}V${bottom}H${left}Z`);
+            continue;
+          }
+        }
+        for (const child of node.children) nodes.push({ node: child, floating });
+      }
+      for (const node of measured) if (!surfaces.has(node)) resize.unobserve(node);
+      for (const node of surfaces) if (!measured.has(node)) resize.observe(node);
+      measured = surfaces;
+      const next = paths.length ? `path("${paths.join(' ')}")` : 'inset(50%)';
+      if (next !== clip) {
+        clip = next;
+        frame.toggleAttribute('data-tt-floating', paths.length > 0);
+        frame.style.setProperty('--tt-script-clip', clip);
+      }
+    }
+
+    mutation.observe(doc.documentElement, { subtree: true, childList: true, attributes: true, characterData: true });
+    resize.observe(frame);
+    doc.addEventListener('transitionend', schedule);
+    doc.addEventListener('animationend', schedule);
+    schedule();
+    disconnect = () => {
+      if (pending !== null) cancelAnimationFrame(pending);
+      mutation.disconnect();
+      resize.disconnect();
+      doc.removeEventListener('transitionend', schedule);
+      doc.removeEventListener('animationend', schedule);
+      frame.removeAttribute('data-tt-floating');
+      frame.style.removeProperty('--tt-script-clip');
+    };
+  }
+  frame.addEventListener('load', connect);
+  return () => { frame.removeEventListener('load', connect); disconnect(); };
 }
 
 function PanelDialog({ id, title, drawer, onDismiss, children }: {
@@ -139,10 +237,8 @@ function ChatComposer({ inputRef, value, sending, enabled, status, onChange, onS
         if (enabled && !sending && value.trim()) onSubmit();
       },
     }),
-    h('div', { className: 'tt-bar' },
-      h('span', { className: 'tt-note', role: 'status' }, status),
-      h(ToolButton, { icon: 'send', className: 'tt-tool-primary', type: 'submit', label: sending ? '发送中…' : '发送', disabled: !enabled || sending || !value.trim() }),
-    ),
+    h(ToolButton, { id: 'send_but', icon: 'send', className: 'tt-tool-primary tt-send', type: 'submit', label: sending ? '发送中…' : '发送', disabled: !enabled || sending || !value.trim() }),
+    h('span', { className: 'tt-note tt-compose-status', role: 'status' }, status),
   );
 }
 

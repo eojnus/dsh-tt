@@ -34,10 +34,11 @@ const exports = new Set(WebAssembly.Module.exports(module).map(({ name }) => nam
 for (const name of ['memory', 'alloc', 'dealloc', 'normalize_card_text', 'scan_png', 'match_lorebook_keywords',
   'assemble_generation', 'encode_display_capture', 'partition_prompt_injections', 'activate_lorebook',
   'layout_lorebook_buckets', 'build_lorebook_scan_windows', 'plan_main_prompt', 'order_prompt_depth', 'layout_message_fences',
+  'project_message_prose', 'normalize_grouped_choices',
   'normalize_preset', 'apply_preset_overrides', 'view_script_preset', 'edit_script_preset',
   'prepare_chat_templates', 'assemble_chat_prompt',
   'project_chat_floors', 'project_live_reply', 'merge_floor_window', 'extension_repository', 'index_extension_archive',
-  'parse_extension_commands', 'edit_extension_worldbook']) {
+  'parse_extension_commands', 'plan_message_action', 'edit_extension_worldbook']) {
   if (!exports.has(name)) throw new Error(`DSH-TT WASM 缺少接口 ${name}`);
 }
 fs.writeFileSync(output,

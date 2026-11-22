@@ -47,6 +47,7 @@ pub fn encode_capture(input: &Value) -> Option<String> {
     match input["kind"].as_str()? {
         "tree" => write_data_tree(input["value"].as_array()?, &mut output, 0)?,
         "text" => escape_html(input["value"].as_str()?, &mut output),
+        "fox-thought" => escape_html(crate::message::fox_thought_text(input["value"].as_str()?), &mut output),
         // Encode a JS string literal and neutralize the HTML raw-text terminator.
         "script" => {
             let literal = serde_json::to_string(input["value"].as_str()?).ok()?;

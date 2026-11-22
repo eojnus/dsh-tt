@@ -8,7 +8,7 @@ import { applyWorldInfoDecorators } from '../plugin/lib/decorators.js';
 import { createMacroEnv } from '../plugin/lib/macros.js';
 import { createEjsScope } from '../plugin/lib/ejs.js';
 import { renderPrompt, parsePreset, applyPresetOverrides, MARKERS } from '../plugin/lib/prompt.js';
-import { tavernPresetPromptEdit, tavernPresetView } from '../plugin/lib/tavern-preset.js';
+import { applyTavernPresetScriptEdit, tavernPresetPromptEdit, tavernPresetView } from '../plugin/lib/tavern-preset.js';
 
 function build({ variables = { 天气: '雨' }, presetJson = presetFixture() } = {}) {
   const card = normalizeCard(cardFixture());
@@ -86,6 +86,20 @@ test('酒馆助手能编辑当前预设的提示词顺序及内容，并保留�
   assert.equal(result.system, '备用');
   assert.equal(result.injected[0].content, '变量已展开');
   assert.equal(result.injected[0].depth, 2);
+});
+
+test('Rust 预设写入同时应用美化正则和设置，扩展补丁不重复存储脚本源码', () => {
+  const extensions = { regex_scripts: [{ id: 'render', disabled: false }], tavern_helper: { scripts: [{ content: '源码' }] }, custom: {} };
+  const raw = { prompts: [{ identifier: 'main', content: '提示词' }], extensions, stream_openai: false };
+  const view = tavernPresetView(raw);
+  view.extensions.regex_scripts[0].disabled = true;
+  view.settings.should_stream = true;
+  const patch = tavernPresetPromptEdit(raw, view);
+  const next = applyTavernPresetScriptEdit(raw, patch);
+  assert.deepEqual(patch.extensions, { regex_scripts: [{ id: 'render', disabled: true }] });
+  assert.equal(raw.extensions.regex_scripts[0].disabled, false);
+  assert.equal(next.extensions.tavern_helper, extensions.tavern_helper);
+  assert.equal(next.stream_openai, true);
 });
 
 test('Rust 预设往返保留不认识的字段并拒绝重复 ID，角色卡只覆盖允许覆盖的内置段', () => {
